@@ -1,46 +1,55 @@
 # Roadmap
 
-This document lists **future features** planned for personal-life-agent. None of these are implemented in the MVP foundation.
+This document lists **future features** only. None of these are implemented in
+the current MVP. The MVP today covers local task/event/activity/reminder
+management, planner views (`today`, `week`, `deadlines`), and confirmed natural
+language input (`extract`, `add`, `complete`).
 
-## Planned capabilities
+See [architecture.md](architecture.md) for how the current system is built and
+why a real LLM and external integrations can be added later without rewriting
+existing layers.
 
-### Calendar and scheduling
+## Planned features
 
-- **Google Calendar integration** — sync events and availability with Google Calendar.
+### Language and extraction
 
-### Input and interaction
+- **Real LLM provider integration** — wire the `llm/client.py` placeholder to an
+  actual model for more flexible extraction, keeping the deterministic
+  rule-based extractor as an offline fallback.
+- **Better Swedish date/time parsing** — broader coverage of relative
+  expressions, weekdays, ranges, and durations.
 
-- **Voice input** — capture tasks and notes via speech.
+### Reminders and planning
 
-### Planning and mobility
+- **Recurring reminders** — repeat schedules (daily/weekly/custom).
+- **Meal suggestions** — suggest meals based on stored preferences.
+- **Local activity / event suggestions** — propose activities or events from
+  context and history.
 
-- **SL route planning** — plan routes and travel for daily life (SL = Sri Lanka context).
+### Integrations
+
+- **Google Calendar export/integration** — export events to and/or sync with
+  Google Calendar.
+- **AI news briefing** — an optional daily briefing.
+
+### Interaction and platforms
+
+- **Voice input** — capture notes and commands via speech.
+- **Web app** — a browser-based interface alongside the CLI.
+- **Mobile app** — a native or cross-platform mobile client.
 
 ### Collaboration
 
-- **Partner login** — shared access for a partner or family member.
+- **Family / partner sharing** — shared access for a partner or family member.
 
-### Platforms
+## Not planned for the near term
 
-- **Web app** — browser-based interface alongside the terminal CLI.
-- **Mobile app** — native or cross-platform mobile client.
+To keep the MVP focused and local-first, the following remain out of scope until
+the features above are stable:
 
-### Data and integrations
+- Cloud database or remote sync.
+- Push / email / background notifications and schedulers.
+- Multi-user accounts and authentication.
 
-- **Local events** — store and manage events on-device without cloud dependency.
-- **External APIs** — connect to third-party services (weather, transit, etc.) as needed.
-
-## Out of scope for early MVP
-
-The foundation step deliberately excludes:
-
-- Database persistence
-- LLM-based extraction
-- Task and event management
-- Activity logs
-- Planner and confirmation flows
-- Reminders
-- Frontend (web or mobile)
-- Authentication and family sharing
-
-Each feature above will be added in focused implementation steps after the core CLI and project structure are stable.
+Each roadmap item is intended to be added as a focused, well-tested step, the
+same way the current MVP was built.
