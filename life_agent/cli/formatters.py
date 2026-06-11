@@ -1,6 +1,10 @@
 """Readable terminal output formatting for domain models and agendas."""
 
 from life_agent.models import ActivityLog, CalendarEvent, Reminder, Task
+from life_agent.schemas.confirmation import (
+    ConfirmationProposal,
+    ConfirmationSaveResult,
+)
 from life_agent.schemas.extraction import ExtractionResult
 from life_agent.schemas.planner import TodayAgenda, WeekAgenda
 
@@ -159,5 +163,40 @@ def format_extraction_result(result: ExtractionResult) -> str:
     ):
         lines.append("")
         lines.append("(no structured items extracted)")
+
+    return "\n".join(lines)
+
+
+def format_confirmation_proposal(proposal: ConfirmationProposal) -> str:
+    """Render the proposal shown before asking the user to confirm."""
+    lines = ["Proposed to save:"]
+    body = format_extraction_result(proposal.extraction)
+    # Reuse the extraction preview body, minus its own heading line.
+    body_lines = body.split("\n")[1:]
+    lines.extend(body_lines)
+    lines.append("")
+    lines.append(
+        f"Will save {proposal.saveable_count} item(s); "
+        f"skipping {proposal.skipped_count} incomplete item(s)."
+    )
+    return "\n".join(lines)
+
+
+def format_save_result(result: ConfirmationSaveResult) -> str:
+    """Render the outcome after a confirmed save."""
+    lines: list[str] = []
+    if result.saved:
+        lines.append(f"Saved {result.saved_count} item(s):")
+        for item in result.saved:
+            lines.append(f"  + {item.item_type}: {item.title}")
+    else:
+        lines.append("Saved 0 items.")
+
+    if result.skipped:
+        lines.append("")
+        lines.append(f"Skipped {result.skipped_count} item(s):")
+        for item in result.skipped:
+            reason = f" ({item.reason})" if item.reason else ""
+            lines.append(f"  - {item.item_type}: {item.title}{reason}")
 
     return "\n".join(lines)

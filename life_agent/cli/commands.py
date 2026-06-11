@@ -266,3 +266,51 @@ def register_commands(app: typer.Typer) -> None:
         console.print(
             "[yellow]Nothing was saved. This is a read-only preview.[/yellow]"
         )
+
+    @app.command("add")
+    def add(
+        text: str = typer.Argument(..., help="Natural language note to extract and save"),
+        yes: Annotated[
+            bool,
+            typer.Option("--yes", "-y", help="Skip the prompt and save immediately"),
+        ] = False,
+    ) -> None:
+        """Extract items from natural language and save them after confirmation."""
+        from life_agent.agent.safety import is_affirmative
+        from life_agent.cli.formatters import (
+            format_confirmation_proposal,
+            format_save_result,
+        )
+        from life_agent.services.confirmation_service import (
+            build_confirmation_proposal,
+            save_confirmed_extraction,
+        )
+        from life_agent.services.extraction_service import extract_from_text
+
+        if not text or not text.strip():
+            console.print("[red]No text provided.[/red]")
+            raise typer.Exit(code=1)
+
+        result = extract_from_text(text)
+        proposal = build_confirmation_proposal(result)
+        console.print(format_confirmation_proposal(proposal))
+        console.print()
+
+        if proposal.saveable_count == 0:
+            console.print(
+                "[yellow]Nothing to save. No items were stored.[/yellow]"
+            )
+            return
+
+        if yes:
+            confirmed = True
+        else:
+            answer = typer.prompt("Save this? [y/N]", default="", show_default=False)
+            confirmed = is_affirmative(answer)
+
+        if not confirmed:
+            console.print("[yellow]Cancelled. Nothing was saved.[/yellow]")
+            return
+
+        save_result = save_confirmed_extraction(result, confirmed=True)
+        console.print(format_save_result(save_result))
