@@ -116,3 +116,43 @@ def test_extract_still_saves_nothing():
     assert result.exit_code == 0
     assert "Nothing was saved" in result.stdout
     assert _is_empty_db()
+
+
+EVENT_TEXT = "Jag har möte på Odenplan kl 14 imorgon"
+
+
+def test_add_event_phrase_asks_before_saving():
+    result = runner.invoke(app, ["add", EVENT_TEXT], input="n\n")
+    assert result.exit_code == 0
+    assert "Proposed to save:" in result.stdout
+    assert "Save this?" in result.stdout
+    assert _is_empty_db()
+
+
+def test_add_event_phrase_saves_event_on_yes():
+    result = runner.invoke(app, ["add", EVENT_TEXT], input="y\n")
+    assert result.exit_code == 0
+    db = _db_path()
+    events = list_events(db)
+    assert len(events) == 1
+    assert events[0].location == "Odenplan"
+
+
+def test_add_event_phrase_enter_saves_nothing():
+    result = runner.invoke(app, ["add", EVENT_TEXT], input="\n")
+    assert result.exit_code == 0
+    assert "Cancelled" in result.stdout
+    assert _is_empty_db()
+
+
+TASK_TEXT = "Jag behöver plugga machine learning på fredag"
+
+
+def test_add_task_phrase_saves_task_on_yes():
+    result = runner.invoke(app, ["add", TASK_TEXT], input="y\n")
+    assert result.exit_code == 0
+    db = _db_path()
+    tasks = list_tasks(db)
+    assert len(tasks) == 1
+    assert str(tasks[0].category) == "study"
+    assert tasks[0].due_date is not None

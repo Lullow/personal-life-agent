@@ -87,3 +87,48 @@ def test_extract_unrecognised_input_shows_no_items_message():
     assert result.exit_code == 0
     assert "no structured items extracted" in result.stdout
     assert "Nothing was saved" in result.stdout
+
+
+def test_extract_event_phrase_shows_event():
+    result = runner.invoke(app, ["extract", "Jag har möte på Odenplan kl 14 imorgon"])
+    assert result.exit_code == 0, result.stdout
+    assert "Events:" in result.stdout
+    assert "Odenplan" in result.stdout
+    assert "Nothing was saved" in result.stdout
+
+
+def test_extract_task_phrase_shows_task():
+    result = runner.invoke(
+        app, ["extract", "Jag behöver plugga machine learning på fredag"]
+    )
+    assert result.exit_code == 0, result.stdout
+    assert "Tasks:" in result.stdout
+    assert "Nothing was saved" in result.stdout
+
+
+def test_extract_reminder_phrase_shows_reminder():
+    result = runner.invoke(
+        app, ["extract", "Påminn mig att handla mat imorgon kl 10"]
+    )
+    assert result.exit_code == 0, result.stdout
+    assert "Reminders:" in result.stdout
+    assert "Nothing was saved" in result.stdout
+
+
+def test_extract_gym_phrase_shows_planned_activity():
+    result = runner.invoke(
+        app, ["extract", "Jag ska gymma bröst och triceps idag kl 18 i 45 minuter"]
+    )
+    assert result.exit_code == 0, result.stdout
+    assert "Activities:" in result.stdout
+    assert "gym" in result.stdout.lower()
+    assert "Nothing was saved" in result.stdout
+
+
+def test_extract_event_phrase_writes_nothing():
+    runner.invoke(app, ["extract", "Jag har möte på Odenplan kl 14 imorgon"])
+    db = _db_path()
+    assert list_tasks(db) == []
+    assert list_events(db) == []
+    assert list_activities(db_path=db) == []
+    assert list_reminders(status=None, db_path=db) == []

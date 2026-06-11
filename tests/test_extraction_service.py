@@ -2,9 +2,19 @@
 
 from datetime import date, datetime
 
-from life_agent.models.common import ActivityType
+from life_agent.models.common import (
+    ActivityType,
+    EventCategory,
+    TaskCategory,
+)
 from life_agent.schemas.extraction import ExtractionResult
 from life_agent.services.extraction_service import extract_from_text
+
+# Reference date used across the deterministic tests below.
+# 2026-06-11 is a Thursday (weekday() == 3), so:
+#   "på fredag" -> 2026-06-12, "på söndag" -> 2026-06-14,
+#   "på måndag" -> 2026-06-15.
+REF = date(2026, 6, 11)
 
 
 # Canonical Swedish example from the spec.
@@ -126,3 +136,183 @@ def test_extraction_confidence_for_useful_input():
     )
     assert result.confidence is not None
     assert result.confidence > 0.0
+
+
+# ---------------------------------------------------------------------------
+# Improved coverage: activities
+# ---------------------------------------------------------------------------
+
+
+def test_planned_gym_today_with_duration():
+    result = extract_from_text(
+        "Jag ska gymma bröst och triceps idag kl 18 i 45 minuter",
+        reference_date=REF,
+    )
+    assert len(result.activities) == 1, result.activities
+    activity = result.activities[0]
+    assert activity.activity_type == ActivityType.GYM
+    assert activity.logged_at == datetime(2026, 6, 11, 18, 0)
+    assert activity.duration_minutes == 45
+    assert activity.title is not None
+    title_lower = activity.title.lower()
+    assert "bröst" in title_lower or "triceps" in title_lower
+    assert result.tasks == []
+    assert result.events == []
+
+
+def test_planned_gym_with_klockan_time():
+    result = extract_from_text(
+        "Jag ska gymma idag klockan 18",
+        reference_date=REF,
+    )
+    assert len(result.activities) == 1
+    assert result.activities[0].logged_at == datetime(2026, 6, 11, 18, 0)
+    assert result.activities[0].activity_type == ActivityType.GYM
+
+
+def test_vague_time_becomes_question_not_timestamp():
+    result = extract_from_text(
+        "Jag ska träna ben på söndag kväll",
+        reference_date=REF,
+    )
+    assert len(result.activities) == 1
+    activity = result.activities[0]
+    assert activity.activity_type == ActivityType.GYM
+    # "kväll" must not be invented into an exact time.
+    assert activity.logged_at is None
+    assert result.questions  # a clarifying question was recorded
+
+
+# ---------------------------------------------------------------------------
+# Improved coverage: events
+# ---------------------------------------------------------------------------
+
+
+def test_event_with_location_and_time():
+    result = extract_from_text(
+        "Jag har möte på Odenplan kl 14 imorgon",
+        reference_date=REF,
+    )
+    assert len(result.events) == 1, result.events
+    event = result.events[0]
+    assert event.start_time == datetime(2026, 6, 12, 14, 0)
+    assert event.location == "Odenplan"
+    assert event.category == EventCategory.MEETING
+    assert event.title is not None and "möte" in event.title.lower()
+
+
+def test_dentist_event_on_weekday():
+    result = extract_from_text(
+        "Jag ska till tandläkaren på fredag kl 10",
+        reference_date=REF,
+    )
+    assert len(result.events) == 1, result.events
+    event = result.events[0]
+    assert event.start_time == datetime(2026, 6, 12, 10, 0)
+    assert event.category == EventCategory.HEALTH
+    assert event.title is not None and "tandläkare" in event.title.lower()
+
+
+def test_event_with_bare_time():
+    result = extract_from_text(
+        "Möte med skolan på måndag 13:30",
+        reference_date=REF,
+    )
+    assert len(result.events) == 1, result.events
+    event = result.events[0]
+    assert event.start_time == datetime(2026, 6, 15, 13, 30)
+    assert event.category == EventCategory.MEETING
+
+
+# ---------------------------------------------------------------------------
+# Improved coverage: tasks
+# ---------------------------------------------------------------------------
+
+
+def test_study_task_with_due_date():
+    result = extract_from_text(
+        "Jag behöver plugga machine learning på fredag",
+        reference_date=REF,
+    )
+    assert len(result.tasks) == 1, result.tasks
+    task = result.tasks[0]
+    assert task.due_date == date(2026, 6, 12)
+    assert task.category == TaskCategory.STUDY
+    assert task.title is not None and "machine learning" in task.title.lower()
+    assert result.activities == []
+    assert result.events == []
+
+
+def test_errand_task_with_due_date():
+    result = extract_from_text(
+        "Jag måste handla mat imorgon",
+        reference_date=REF,
+    )
+    assert len(result.tasks) == 1, result.tasks
+    task = result.tasks[0]
+    assert task.due_date == date(2026, 6, 12)
+    assert task.category == TaskCategory.ERRAND
+    assert task.title is not None and "handla" in task.title.lower()
+
+
+def test_kom_ihag_task_on_weekday():
+    result = extract_from_text(
+        "Kom ihåg att betala fakturan på måndag",
+        reference_date=REF,
+    )
+    assert len(result.tasks) == 1, result.tasks
+    task = result.tasks[0]
+    assert task.due_date == date(2026, 6, 15)
+    assert task.category == TaskCategory.ERRAND
+    assert task.title is not None
+    title_lower = task.title.lower()
+    assert "betala" in title_lower or "faktura" in title_lower
+
+
+# ---------------------------------------------------------------------------
+# Improved coverage: reminders
+# ---------------------------------------------------------------------------
+
+
+def test_standalone_reminder_with_date_and_time():
+    result = extract_from_text(
+        "Påminn mig att handla mat imorgon kl 10",
+        reference_date=REF,
+    )
+    assert len(result.reminders) == 1, result.reminders
+    reminder = result.reminders[0]
+    assert reminder.remind_at == datetime(2026, 6, 12, 10, 0)
+    assert reminder.title is not None and "handla" in reminder.title.lower()
+    # A "påminn" phrase is a reminder, not a task.
+    assert result.tasks == []
+
+
+def test_reminder_on_weekday_stays_general():
+    result = extract_from_text(
+        "Påminn mig på fredag kl 08",
+        reference_date=REF,
+    )
+    assert len(result.reminders) == 1, result.reminders
+    reminder = result.reminders[0]
+    assert reminder.remind_at == datetime(2026, 6, 12, 8, 0)
+    # target unclear -> stays general (None here, defaulted on save)
+    assert reminder.target_type is None
+
+
+# ---------------------------------------------------------------------------
+# Improved coverage: weekday parsing determinism
+# ---------------------------------------------------------------------------
+
+
+def test_weekday_parsing_uses_reference_date():
+    # From Thursday 2026-06-11, "på söndag" is 2026-06-14.
+    from_thursday = extract_from_text(
+        "Jag behöver plugga på söndag", reference_date=date(2026, 6, 11)
+    )
+    assert from_thursday.tasks[0].due_date == date(2026, 6, 14)
+
+    # From Monday 2026-06-15, "på söndag" is the following Sunday 2026-06-21.
+    from_monday = extract_from_text(
+        "Jag behöver plugga på söndag", reference_date=date(2026, 6, 15)
+    )
+    assert from_monday.tasks[0].due_date == date(2026, 6, 21)

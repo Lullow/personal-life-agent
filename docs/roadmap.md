@@ -16,8 +16,10 @@ existing layers.
 - **Real LLM provider integration** — wire the `llm/client.py` placeholder to an
   actual model for more flexible extraction, keeping the deterministic
   rule-based extractor as an offline fallback.
-- **Better Swedish date/time parsing** — broader coverage of relative
-  expressions, weekdays, ranges, and durations.
+- **Better Swedish date/time parsing** — the extractor already covers relative
+  dates (`idag`, `imorgon`), weekdays (`på måndag` … `på söndag`), times
+  (`kl 9`, `kl 09:00`, `klockan 18`, bare `13:30`), and durations. Future work:
+  date ranges, "om X dagar/veckor", part-of-day windows, and recurring phrasing.
 
 ### Reminders and planning
 

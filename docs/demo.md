@@ -136,16 +136,53 @@ All tests use temporary databases, so running them never touches your
 `extract` shows what *would* be extracted and saves nothing:
 
 ```bash
-python -m life_agent extract "Möte på Odenplan kl 14 imorgon"
+python -m life_agent extract "Jag har möte på Odenplan kl 14 imorgon"
 ```
 
 ```
 Extraction preview:
 
 Events:
-  [1] 2026-06-12 14:00 - Möte på Odenplan
+  [1] 2026-06-12 14:00 meeting - Möte (Odenplan)
 
 Confidence: 0.55
 
 Nothing was saved. This is a read-only preview.
 ```
+
+## More phrases the extractor understands
+
+The deterministic extractor handles common Swedish planning phrases, including
+relative dates (`idag`, `imorgon`), weekdays (`på fredag` … `på söndag`), and
+times (`kl 9`, `kl 09:00`, `klockan 18`, bare `13:30`). A few examples:
+
+```bash
+# Task with a due date (category inferred: study / errand)
+python -m life_agent extract "Jag behöver plugga machine learning på fredag"
+#   Tasks:
+#     [1] 2026-06-12 medium study - Plugga machine learning
+
+# Errand task
+python -m life_agent extract "Jag måste handla mat imorgon"
+#   Tasks:
+#     [1] 2026-06-12 medium errand - Handla mat
+
+# Reminder with date + time
+python -m life_agent extract "Påminn mig att handla mat imorgon kl 10"
+#   Reminders:
+#     [1] 2026-06-12 10:00 - Handla mat
+
+# Planned gym activity with duration
+python -m life_agent extract "Jag ska gymma bröst och triceps idag kl 18 i 45 minuter"
+#   Activities:
+#     [1] 2026-06-11 18:00 gym 45min - Gymma bröst och triceps
+
+# Appointment on a weekday
+python -m life_agent extract "Jag ska till tandläkaren på fredag kl 10"
+#   Events:
+#     [1] 2026-06-12 10:00 health - Tandläkaren
+```
+
+Vague times such as *"på söndag kväll"* are **not** invented into an exact
+timestamp; the extractor records a clarifying question instead. As always,
+`extract` is read-only and `add` asks `Save this? [y/N]` before writing.

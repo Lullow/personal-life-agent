@@ -148,7 +148,8 @@ def format_extraction_result(result: ExtractionResult) -> str:
                 else "-"
             )
             loc = f" ({event.location})" if event.location else ""
-            lines.append(f"  [{i}] {start} - {event.title or '-'}{loc}")
+            cat = f" {event.category}" if event.category else ""
+            lines.append(f"  [{i}] {start}{cat} - {event.title or '-'}{loc}")
 
     if result.tasks:
         lines.append("")
@@ -156,7 +157,8 @@ def format_extraction_result(result: ExtractionResult) -> str:
         for i, task in enumerate(result.tasks, start=1):
             due = task.due_date.isoformat() if task.due_date else "-"
             pri = task.priority if task.priority else "-"
-            lines.append(f"  [{i}] {due} {pri} - {task.title or '-'}")
+            cat = task.category if task.category else "-"
+            lines.append(f"  [{i}] {due} {pri} {cat} - {task.title or '-'}")
 
     if result.reminders:
         lines.append("")
