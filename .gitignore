@@ -43,6 +43,9 @@ htmlcov/
 *.swo
 *~
 
+# Local data
+data/
+
 # OS
 .DS_Store
 Thumbs.db
