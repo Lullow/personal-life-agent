@@ -1,7 +1,10 @@
 # Privacy
 
 Personal Life Agent is **local-first** by design. It is built to run entirely on
-your own machine, with no accounts and no network dependencies in this MVP.
+your own machine, with no accounts and no network dependencies by default.
+
+The only way any data leaves your machine is if **you** explicitly enable the
+optional LLM extraction mode (see [Optional LLM mode](#optional-llm-mode)).
 
 ## Where your data lives
 
@@ -13,12 +16,14 @@ your own machine, with no accounts and no network dependencies in this MVP.
 
 ## What the MVP does *not* do
 
-The current MVP intentionally has **no** external dependencies at runtime:
+By default the app makes **no** network calls at runtime:
 
-- **No external APIs.** Natural language extraction uses a deterministic,
-  rule-based parser that runs locally. No request leaves your machine.
-- **No real LLM provider.** The LLM client is a disabled placeholder; it never
-  makes a network call.
+- **No external APIs by default.** Natural language extraction uses a
+  deterministic, rule-based parser that runs locally. No request leaves your
+  machine unless you opt in to LLM mode.
+- **No LLM provider unless you enable one.** The OpenAI-compatible client is
+  disabled until you set `LIFE_AGENT_EXTRACTION_MODE=llm` and the
+  `LIFE_AGENT_LLM_*` variables.
 - **No Google Calendar** (or any calendar) integration.
 - **No partner / family sharing** and no multi-user accounts.
 - **No cloud database** and no remote sync.
@@ -39,6 +44,24 @@ personal information that **you** enter, such as:
 
 This data stays in `data/life_agent.db` on your machine unless you copy or share
 that file yourself.
+
+## Optional LLM mode
+
+LLM extraction is **off by default**. If you enable it
+(`LIFE_AGENT_EXTRACTION_MODE=llm` plus the `LIFE_AGENT_LLM_*` variables), then:
+
+- The raw text you pass to `extract`, `add`, and `complete` is sent to the
+  OpenAI-compatible endpoint you configured, in order to extract structured
+  items. That request leaves your machine and is subject to **that provider's**
+  privacy and data-retention policies.
+- Only the note text and a system prompt are sent — never your SQLite database.
+- The request is skipped (and the app falls back to the offline extractor) if
+  the provider is not fully configured or is unreachable.
+- Keep your API key in a local `.env` file or your shell environment. **Never
+  commit real keys** — `.env.example` ships with placeholders only.
+
+If you want a guarantee that nothing ever leaves your machine, simply leave
+`LIFE_AGENT_EXTRACTION_MODE` at its default (`deterministic`).
 
 ## Do not commit your database
 

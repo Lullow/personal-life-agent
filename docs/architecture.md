@@ -23,7 +23,8 @@ Supporting modules sit alongside these layers:
 - **Schemas** (`life_agent/schemas/`) — structured input/output shapes for
   extraction, planning, and confirmation.
 - **Agent** (`life_agent/agent/`) — LLM prompt text and the safety rule.
-- **LLM** (`life_agent/llm/`) — a client placeholder and JSON-to-schema parsing.
+- **LLM** (`life_agent/llm/`) — an optional OpenAI-compatible client (stdlib
+  only) and JSON-to-schema parsing.
 
 ## CLI layer (`life_agent/cli/`)
 
@@ -86,20 +87,32 @@ confirmation previews).
 
 ## Extraction service
 
-`extract_from_text(text, reference_date=None, llm_client=None)`:
+`extract_from_text(text, reference_date=None, llm_client=None, mode=None)`
+chooses an extraction strategy and always returns an `ExtractionResult`:
 
-1. If an LLM client is configured **and enabled**, its JSON is validated into an
-   `ExtractionResult`. In this MVP the client (`llm/client.py`) is a disabled
-   placeholder that always returns `None`, so no network call happens.
-2. Otherwise a deterministic, rule-based extractor runs. It recognises Swedish
-   and English patterns used by this project: clock times (`kl 12`, `kl 12:30`),
-   relative dates (`idag`, `imorgon`, `i övermorgon`), durations (`1h`,
-   `30 min`), reminder triggers (`påminn`), event keywords (`möte`), and
-   activity verbs (`träna` → gym, `springa` → run, …).
-3. Unclear or missing details become entries in `questions` rather than guesses,
+1. **Mode selection.** An explicit `llm_client` (used in tests) forces LLM mode;
+   otherwise the `mode` argument or `Settings.extraction_mode` decides. The
+   default is `deterministic`, so the app works offline with no API key.
+2. **LLM mode.** The configured `LLMClient.from_settings()` sends the system
+   prompt plus a date-aware user prompt to an OpenAI-compatible
+   `/chat/completions` endpoint and requests JSON only. The response is parsed
+   and validated with `safe_parse_extraction_result`. If the client is disabled
+   (missing base URL/API key/model), unreachable, or returns invalid JSON, the
+   service **degrades to the deterministic extractor** and adds a short note to
+   `questions` — it never raises.
+3. **Deterministic mode.** A rule-based extractor recognises Swedish/English
+   patterns: clock times (`kl 12`, `13:30`, `klockan 18`), relative dates and
+   weekdays (`idag`, `imorgon`, `på fredag`), durations (`1h`, `45 min`),
+   reminder triggers (`påminn`), task intent (`behöver`, `måste`, `kom ihåg`),
+   event keywords (`möte`, `tandläkare`) with `på <Plats>` locations, and
+   activity verbs (`träna`/`gymma` → gym).
+4. Unclear or missing details become entries in `questions` rather than guesses,
    and `confidence` reflects how much was extracted.
 
-Extraction is always **read-only**.
+The `LLMClient` is deliberately isolated and dependency-free (Python stdlib
+`urllib`), so swapping providers — or installing the project without any LLM —
+never affects the CLI, services, or database. Extraction is always
+**read-only**; saving still goes through the confirmation flow below.
 
 ## Confirmation flow
 
@@ -151,6 +164,6 @@ The `complete` command marks a previously planned activity as done:
   rewriting earlier ones.
 - **Safety** — keeping persistence behind services and a single safety helper
   makes the "no write without confirmation" guarantee easy to enforce and audit.
-- **Future LLM swap** — because extraction returns a schema and the LLM client is
-  isolated, a real provider can be added later without changing the CLI,
-  services, or database.
+- **Pluggable LLM** — because extraction returns a schema and the LLM client is
+  isolated behind one interface, the optional OpenAI-compatible provider plugs
+  in (and falls back) without changing the CLI, services, or database.

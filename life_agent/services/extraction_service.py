@@ -23,9 +23,13 @@ a clarifying question is recorded.
 import re
 from datetime import date, datetime, time, timedelta
 
-from life_agent.agent.prompts import EXTRACTION_SYSTEM_PROMPT
+from life_agent.agent.prompts import (
+    EXTRACTION_SYSTEM_PROMPT,
+    EXTRACTION_USER_PROMPT_TEMPLATE,
+)
+from life_agent.config import EXTRACTION_MODE_LLM, get_settings
 from life_agent.llm.client import LLMClient
-from life_agent.llm.structured_output import parse_extraction_result
+from life_agent.llm.structured_output import safe_parse_extraction_result
 from life_agent.models.common import (
     ActivityType,
     EventCategory,
@@ -191,12 +195,22 @@ def extract_from_text(
     text: str,
     reference_date: date | None = None,
     llm_client: LLMClient | None = None,
+    mode: str | None = None,
 ) -> ExtractionResult:
     """Extract a structured :class:`ExtractionResult` from raw user text.
 
-    If an LLM client is configured and enabled, its JSON output is parsed and
-    returned.  Otherwise a deterministic rule-based extractor runs.  No data
-    is written to the database in either case.
+    Mode selection (in priority order):
+
+    1. An explicit ``llm_client`` argument forces LLM extraction (used in tests
+       with a fake client).
+    2. Otherwise the *mode* argument, falling back to
+       ``Settings.extraction_mode`` (``deterministic`` by default).
+
+    In ``llm`` mode the configured client is asked for JSON, which is validated
+    into an :class:`ExtractionResult`.  If the client is unavailable or returns
+    invalid data, extraction degrades gracefully to the deterministic
+    rule-based extractor and records a short note in ``questions``.  No data is
+    written to the database in any case, and extraction is always read-only.
     """
     cleaned = text.strip() if text else ""
     if not cleaned:
@@ -206,17 +220,59 @@ def extract_from_text(
             questions=["No text was provided."],
         )
 
-    client = llm_client if llm_client is not None else LLMClient()
-    llm_data = client.extract_structured(EXTRACTION_SYSTEM_PROMPT, cleaned)
-    if llm_data is not None:
-        try:
-            parsed = parse_extraction_result(llm_data)
-            return parsed.model_copy(update={"raw_text": cleaned})
-        except Exception:
-            # Fall through to the rule-based extractor.
-            pass
+    reference = reference_date or date.today()
 
-    return _rule_based_extract(cleaned, reference_date or date.today())
+    explicit_client = llm_client is not None
+    resolved_mode = EXTRACTION_MODE_LLM if explicit_client else (
+        mode or get_settings().extraction_mode
+    )
+
+    if resolved_mode == EXTRACTION_MODE_LLM:
+        return _llm_extract_with_fallback(cleaned, reference, llm_client)
+
+    return _rule_based_extract(cleaned, reference)
+
+
+def _llm_extract_with_fallback(
+    cleaned: str,
+    reference: date,
+    llm_client: LLMClient | None,
+) -> ExtractionResult:
+    """Try LLM extraction, then degrade to the deterministic extractor."""
+    client = llm_client if llm_client is not None else LLMClient.from_settings()
+
+    if not getattr(client, "enabled", True):
+        note = (
+            "LLM mode is enabled but not fully configured "
+            "(set LIFE_AGENT_LLM_BASE_URL, LIFE_AGENT_LLM_API_KEY, and "
+            "LIFE_AGENT_LLM_MODEL); used the deterministic extractor instead."
+        )
+        return _deterministic_with_note(cleaned, reference, note)
+
+    user_prompt = EXTRACTION_USER_PROMPT_TEMPLATE.format(
+        today=reference.isoformat(), text=cleaned
+    )
+    try:
+        raw = client.extract_structured(EXTRACTION_SYSTEM_PROMPT, user_prompt)
+    except Exception:
+        raw = None
+
+    parsed = safe_parse_extraction_result(raw) if raw is not None else None
+    if parsed is not None:
+        return parsed.model_copy(update={"raw_text": cleaned})
+
+    note = (
+        "LLM extraction did not return valid data; "
+        "used the deterministic extractor instead."
+    )
+    return _deterministic_with_note(cleaned, reference, note)
+
+
+def _deterministic_with_note(
+    cleaned: str, reference: date, note: str
+) -> ExtractionResult:
+    result = _rule_based_extract(cleaned, reference)
+    return result.model_copy(update={"questions": [*result.questions, note]})
 
 
 # ---------------------------------------------------------------------------

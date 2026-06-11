@@ -55,9 +55,12 @@ Output schema:
 }
 
 Rules:
-- Output ONLY the JSON object.  No prose, no markdown.
+- Output ONLY the JSON object.  No prose, no markdown, no code fences.
+- Every top-level key (tasks, events, activities, reminders, questions) must be
+  present.  Use empty arrays when there is nothing to extract.
 - Use ISO-8601 for datetimes (``YYYY-MM-DDTHH:MM:SS``) and ``YYYY-MM-DD`` for dates.
 - Do not invent details that are not explicit or strongly implied by the text.
+  In particular, never guess an exact time for vague phrases like "kväll".
 - If a detail is missing or unclear, add a short clarifying question to
   ``questions`` instead of guessing.
 - ``confidence`` is a float between 0.0 and 1.0 expressing how sure you are
@@ -65,8 +68,10 @@ Rules:
 """
 
 EXTRACTION_USER_PROMPT_TEMPLATE = """\
-Today's date is {today}.  Interpret relative times like "imorgon", "ikväll",
-"i övermorgon" or "tomorrow" relative to this date.
+Today's date is {today}.  Interpret relative expressions against this date:
+- "idag"/"today", "imorgon"/"tomorrow", "i övermorgon".
+- Swedish weekdays such as "på måndag" … "på söndag" mean the next occurrence
+  of that weekday.
 
 Note:
 \"\"\"

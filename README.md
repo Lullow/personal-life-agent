@@ -4,8 +4,10 @@ A **local-first terminal assistant** for managing the small, recurring parts of
 daily life — tasks, calendar events, activities, and reminders — with optional
 natural language input in Swedish or English.
 
-Everything runs on your machine. There are no cloud services, no external APIs,
-and no accounts. Your data lives in a local SQLite file.
+Everything runs on your machine by default. There are no accounts, and your data
+lives in a local SQLite file. Natural language understanding uses a deterministic
+offline extractor out of the box; an **optional** OpenAI-compatible LLM can be
+enabled via configuration if you want it (see [LLM extraction](#optional-llm-extraction)).
 
 ## What problem it solves
 
@@ -46,8 +48,8 @@ This MVP is intentionally focused and runs entirely offline:
 
 This MVP deliberately leaves out (see [docs/roadmap.md](docs/roadmap.md)):
 
-- A real LLM provider — extraction currently uses a deterministic rule-based
-  fallback, not a network API call.
+- A bundled LLM dependency — LLM extraction is **optional and opt-in** via
+  config; the default is a fully offline deterministic extractor.
 - Google Calendar or any external integration.
 - Cloud storage or a hosted database.
 - Push, email, or background notifications / schedulers.
@@ -124,7 +126,8 @@ For a full, reproducible walkthrough see [docs/demo.md](docs/demo.md).
 ## Privacy (local-first)
 
 - All data is stored locally in SQLite at `data/life_agent.db` by default.
-- No external APIs are called in this MVP.
+- No external APIs are called unless you explicitly enable LLM mode
+  (`LIFE_AGENT_EXTRACTION_MODE=llm`). The default is fully offline.
 - See [docs/privacy.md](docs/privacy.md) for details and a warning about not
   committing your database file.
 
@@ -139,13 +142,47 @@ See [docs/testing.md](docs/testing.md).
 
 ## Configuration
 
-Settings are read from environment variables (optionally via a `.env` file):
+Settings are read from environment variables (optionally via a `.env` file —
+copy `.env.example` to `.env`):
 
 | Variable    | Default               | Description                          |
 |-------------|-----------------------|--------------------------------------|
 | `APP_ENV`   | `development`         | Application environment              |
 | `LOG_LEVEL` | `INFO`                | Logging level                        |
 | `DB_PATH`   | `data/life_agent.db`  | Path to the local SQLite database    |
+| `LIFE_AGENT_EXTRACTION_MODE` | `deterministic` | `deterministic` (offline) or `llm`   |
+| `LIFE_AGENT_LLM_PROVIDER`    | `openai_compatible` | Provider type for LLM mode    |
+| `LIFE_AGENT_LLM_BASE_URL`    | _(unset)_           | OpenAI-compatible base URL    |
+| `LIFE_AGENT_LLM_API_KEY`     | _(unset)_           | API key for the provider      |
+| `LIFE_AGENT_LLM_MODEL`       | _(unset)_           | Model name to request         |
+
+### Optional LLM extraction
+
+By default the app uses a **deterministic, offline** extractor and never makes a
+network call — no API key is required and everything works out of the box.
+
+You can optionally route extraction through any **OpenAI-compatible** API
+(OpenAI, OpenRouter, a local server, …). Enable it by setting:
+
+```bash
+export LIFE_AGENT_EXTRACTION_MODE=llm
+export LIFE_AGENT_LLM_BASE_URL=https://api.openai.com/v1
+export LIFE_AGENT_LLM_API_KEY=sk-your-key-here
+export LIFE_AGENT_LLM_MODEL=gpt-4o-mini
+```
+
+How it behaves safely:
+
+- The LLM is asked for **JSON only**, which is validated against the same
+  `ExtractionResult` schema as the offline extractor.
+- If the provider is unconfigured, unreachable, or returns invalid output, the
+  app **falls back to the deterministic extractor** and prints a short note —
+  it never crashes.
+- `extract` stays **read-only**, and `add` still asks `Save this? [y/N]` before
+  writing anything. LLM output is never saved without validation **and**
+  confirmation.
+- No LLM SDK is bundled; the client uses only the Python standard library, so
+  installing this project never pulls in a provider dependency.
 
 ## Project structure
 
@@ -159,7 +196,7 @@ personal-life-agent/
 │   ├── models/          # Pydantic domain models + shared enums
 │   ├── schemas/         # Extraction / planner / confirmation schemas
 │   ├── agent/           # Prompts and the safety rule
-│   ├── llm/             # LLM client placeholder + structured-output parsing
+│   ├── llm/             # Optional OpenAI-compatible client + JSON parsing
 │   ├── config.py        # Environment-based settings
 │   └── main.py          # Typer app entry point
 ├── tests/               # Pytest suite (uses temporary databases)

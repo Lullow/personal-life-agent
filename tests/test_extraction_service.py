@@ -316,3 +316,92 @@ def test_weekday_parsing_uses_reference_date():
         "Jag behöver plugga på söndag", reference_date=date(2026, 6, 15)
     )
     assert from_monday.tasks[0].due_date == date(2026, 6, 21)
+
+
+# ---------------------------------------------------------------------------
+# Optional LLM mode (with a fake client — never a real network call)
+# ---------------------------------------------------------------------------
+
+
+class _FakeLLMClient:
+    """Stand-in for LLMClient that returns a canned dict (or raises)."""
+
+    def __init__(self, payload=None, *, enabled=True, error=None):
+        self.payload = payload
+        self.enabled = enabled
+        self.error = error
+
+    def extract_structured(self, system_prompt, user_text):
+        if self.error is not None:
+            raise self.error
+        return self.payload
+
+
+def test_llm_client_result_is_used_when_valid():
+    payload = {
+        "tasks": [{"title": "From the LLM", "category": "study"}],
+        "events": [],
+        "activities": [],
+        "reminders": [],
+        "questions": [],
+        "confidence": 0.95,
+    }
+    result = extract_from_text(
+        "anything", reference_date=REF, llm_client=_FakeLLMClient(payload)
+    )
+    assert len(result.tasks) == 1
+    assert result.tasks[0].title == "From the LLM"
+    assert result.confidence == 0.95
+    # raw_text is always set from the input.
+    assert result.raw_text == "anything"
+
+
+def test_llm_invalid_output_falls_back_to_deterministic():
+    # Invalid shape (tasks must be a list) -> validation fails -> fallback.
+    bad_payload = {"tasks": "not-a-list"}
+    result = extract_from_text(
+        "Jag ska gymma idag kl 18",
+        reference_date=REF,
+        llm_client=_FakeLLMClient(bad_payload),
+    )
+    # Deterministic extractor still found the planned activity.
+    assert len(result.activities) == 1
+    assert result.activities[0].logged_at == datetime(2026, 6, 11, 18, 0)
+    # A note explains the graceful fallback.
+    assert any("deterministic extractor" in q for q in result.questions)
+
+
+def test_llm_client_error_falls_back_to_deterministic():
+    result = extract_from_text(
+        "Jag ska gymma idag kl 18",
+        reference_date=REF,
+        llm_client=_FakeLLMClient(error=RuntimeError("boom")),
+    )
+    assert len(result.activities) == 1
+    assert any("deterministic extractor" in q for q in result.questions)
+
+
+def test_llm_mode_without_config_falls_back(monkeypatch):
+    for var in (
+        "LIFE_AGENT_LLM_API_KEY",
+        "LIFE_AGENT_LLM_BASE_URL",
+        "LIFE_AGENT_LLM_MODEL",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+    result = extract_from_text(
+        "Jag ska gymma idag kl 18", reference_date=REF, mode="llm"
+    )
+    # Still works, using the deterministic extractor, with an explanatory note.
+    assert len(result.activities) == 1
+    assert any("not fully configured" in q for q in result.questions)
+
+
+def test_default_mode_is_deterministic_without_env(monkeypatch):
+    monkeypatch.delenv("LIFE_AGENT_EXTRACTION_MODE", raising=False)
+    result = extract_from_text(
+        "Jag ska gymma idag kl 18", reference_date=REF
+    )
+    assert len(result.activities) == 1
+    # No fallback note when deterministic is the chosen mode.
+    assert not any("deterministic extractor" in q for q in result.questions)

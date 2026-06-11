@@ -156,3 +156,20 @@ def test_add_task_phrase_saves_task_on_yes():
     assert len(tasks) == 1
     assert str(tasks[0].category) == "study"
     assert tasks[0].due_date is not None
+
+
+def test_add_still_requires_confirmation_in_llm_mode(monkeypatch):
+    # Even with LLM mode enabled (and no key -> deterministic fallback), the
+    # add command must still ask before writing anything.
+    for var in (
+        "LIFE_AGENT_LLM_API_KEY",
+        "LIFE_AGENT_LLM_BASE_URL",
+        "LIFE_AGENT_LLM_MODEL",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("LIFE_AGENT_EXTRACTION_MODE", "llm")
+
+    result = runner.invoke(app, ["add", TRAINING_TEXT], input="n\n")
+    assert result.exit_code == 0
+    assert "Save this?" in result.stdout
+    assert _is_empty_db()

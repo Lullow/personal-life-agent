@@ -132,3 +132,24 @@ def test_extract_event_phrase_writes_nothing():
     assert list_events(db) == []
     assert list_activities(db_path=db) == []
     assert list_reminders(status=None, db_path=db) == []
+
+
+def test_extract_llm_mode_without_key_falls_back_gracefully(monkeypatch):
+    # Enable LLM mode but provide no provider config: must not crash, must
+    # fall back to deterministic extraction and stay read-only.
+    for var in (
+        "LIFE_AGENT_LLM_API_KEY",
+        "LIFE_AGENT_LLM_BASE_URL",
+        "LIFE_AGENT_LLM_MODEL",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("LIFE_AGENT_EXTRACTION_MODE", "llm")
+
+    result = runner.invoke(app, ["extract", "Jag ska gymma idag kl 18"])
+    assert result.exit_code == 0, result.stdout
+    assert "Extraction preview" in result.stdout
+    assert "Activities:" in result.stdout
+    assert "Nothing was saved" in result.stdout
+
+    db = _db_path()
+    assert list_activities(db_path=db) == []

@@ -7,6 +7,10 @@ from pydantic import BaseModel, Field
 
 DEFAULT_DB_PATH = Path("data") / "life_agent.db"
 
+# Extraction modes
+EXTRACTION_MODE_DETERMINISTIC = "deterministic"
+EXTRACTION_MODE_LLM = "llm"
+
 
 class Settings(BaseModel):
     """Minimal settings for the MVP foundation."""
@@ -15,6 +19,21 @@ class Settings(BaseModel):
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     db_path: str = Field(default=str(DEFAULT_DB_PATH), alias="DB_PATH")
 
+    # Natural language extraction
+    extraction_mode: str = Field(
+        default=EXTRACTION_MODE_DETERMINISTIC,
+        alias="LIFE_AGENT_EXTRACTION_MODE",
+    )
+
+    # Optional LLM provider (OpenAI-compatible). Unset by default so the app
+    # works fully offline with the deterministic extractor.
+    llm_provider: str = Field(
+        default="openai_compatible", alias="LIFE_AGENT_LLM_PROVIDER"
+    )
+    llm_base_url: str | None = Field(default=None, alias="LIFE_AGENT_LLM_BASE_URL")
+    llm_api_key: str | None = Field(default=None, alias="LIFE_AGENT_LLM_API_KEY")
+    llm_model: str | None = Field(default=None, alias="LIFE_AGENT_LLM_MODEL")
+
     @classmethod
     def from_env(cls) -> "Settings":
         """Build settings from environment variables with sensible defaults."""
@@ -22,6 +41,15 @@ class Settings(BaseModel):
             APP_ENV=os.getenv("APP_ENV", "development"),
             LOG_LEVEL=os.getenv("LOG_LEVEL", "INFO"),
             DB_PATH=os.getenv("DB_PATH", str(DEFAULT_DB_PATH)),
+            LIFE_AGENT_EXTRACTION_MODE=os.getenv(
+                "LIFE_AGENT_EXTRACTION_MODE", EXTRACTION_MODE_DETERMINISTIC
+            ),
+            LIFE_AGENT_LLM_PROVIDER=os.getenv(
+                "LIFE_AGENT_LLM_PROVIDER", "openai_compatible"
+            ),
+            LIFE_AGENT_LLM_BASE_URL=os.getenv("LIFE_AGENT_LLM_BASE_URL"),
+            LIFE_AGENT_LLM_API_KEY=os.getenv("LIFE_AGENT_LLM_API_KEY"),
+            LIFE_AGENT_LLM_MODEL=os.getenv("LIFE_AGENT_LLM_MODEL"),
         )
 
 
