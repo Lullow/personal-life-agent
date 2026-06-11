@@ -3,6 +3,7 @@
 from life_agent.schemas.extraction import (
     ExtractedActivity,
     ExtractedEvent,
+    ExtractedReminder,
     ExtractedTask,
     ExtractionResult,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "DayPlan",
     "ExtractedActivity",
     "ExtractedEvent",
+    "ExtractedReminder",
     "ExtractedTask",
     "ExtractionResult",
     "TodayAgenda",

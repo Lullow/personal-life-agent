@@ -1,6 +1,7 @@
 """Readable terminal output formatting for domain models and agendas."""
 
 from life_agent.models import ActivityLog, CalendarEvent, Reminder, Task
+from life_agent.schemas.extraction import ExtractionResult
 from life_agent.schemas.planner import TodayAgenda, WeekAgenda
 
 
@@ -88,4 +89,75 @@ def format_deadlines(tasks: list[Task]) -> str:
     lines = ["Upcoming deadlines:"]
     for i, task in enumerate(tasks, start=1):
         lines.append(format_task_line(i, task))
+    return "\n".join(lines)
+
+
+def format_extraction_result(result: ExtractionResult) -> str:
+    """Render an extraction preview.  Caller appends the 'nothing saved' note."""
+    lines: list[str] = ["Extraction preview:"]
+
+    if result.activities:
+        lines.append("")
+        lines.append("Activities:")
+        for i, activity in enumerate(result.activities, start=1):
+            when = (
+                activity.logged_at.strftime("%Y-%m-%d %H:%M")
+                if activity.logged_at
+                else "-"
+            )
+            dur = (
+                f"{activity.duration_minutes}min"
+                if activity.duration_minutes is not None
+                else "-"
+            )
+            atype = activity.activity_type if activity.activity_type else "-"
+            lines.append(f"  [{i}] {when} {atype} {dur} - {activity.title or '-'}")
+
+    if result.events:
+        lines.append("")
+        lines.append("Events:")
+        for i, event in enumerate(result.events, start=1):
+            start = (
+                event.start_time.strftime("%Y-%m-%d %H:%M")
+                if event.start_time
+                else "-"
+            )
+            loc = f" ({event.location})" if event.location else ""
+            lines.append(f"  [{i}] {start} - {event.title or '-'}{loc}")
+
+    if result.tasks:
+        lines.append("")
+        lines.append("Tasks:")
+        for i, task in enumerate(result.tasks, start=1):
+            due = task.due_date.isoformat() if task.due_date else "-"
+            pri = task.priority if task.priority else "-"
+            lines.append(f"  [{i}] {due} {pri} - {task.title or '-'}")
+
+    if result.reminders:
+        lines.append("")
+        lines.append("Reminders:")
+        for i, reminder in enumerate(result.reminders, start=1):
+            when = (
+                reminder.remind_at.strftime("%Y-%m-%d %H:%M")
+                if reminder.remind_at
+                else "-"
+            )
+            lines.append(f"  [{i}] {when} - {reminder.title or '-'}")
+
+    if result.questions:
+        lines.append("")
+        lines.append("Questions:")
+        for question in result.questions:
+            lines.append(f"  - {question}")
+
+    if result.confidence is not None:
+        lines.append("")
+        lines.append(f"Confidence: {result.confidence:.2f}")
+
+    if not (
+        result.tasks or result.events or result.activities or result.reminders
+    ):
+        lines.append("")
+        lines.append("(no structured items extracted)")
+
     return "\n".join(lines)

@@ -243,3 +243,26 @@ def register_commands(app: typer.Typer) -> None:
             console.print(f"[red]No reminder found with id {reminder_id}.[/red]")
             raise typer.Exit(code=1)
         console.print(f"[green]Dismissed reminder #{updated.id}:[/green] {updated.title}")
+
+    # ------------------------------------------------------------------
+    # Extraction command (read-only preview, no database writes)
+    # ------------------------------------------------------------------
+
+    @app.command("extract")
+    def extract(
+        text: str = typer.Argument(..., help="Unstructured note to extract"),
+    ) -> None:
+        """Extract structured items from natural language (preview only)."""
+        from life_agent.cli.formatters import format_extraction_result
+        from life_agent.services.extraction_service import extract_from_text
+
+        if not text or not text.strip():
+            console.print("[red]No text provided.[/red]")
+            raise typer.Exit(code=1)
+
+        result = extract_from_text(text)
+        console.print(format_extraction_result(result))
+        console.print()
+        console.print(
+            "[yellow]Nothing was saved. This is a read-only preview.[/yellow]"
+        )
