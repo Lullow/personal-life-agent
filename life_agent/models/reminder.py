@@ -13,13 +13,17 @@ from life_agent.models.common import (
 
 
 class Reminder(BaseModel):
-    """A time-based notification linked to a task, event, or general note."""
+    """A time-based notification linked to a task, event, or general note.
 
-    id: str | None = None
+    Reminders use an auto-incrementing integer ``id`` (assigned by SQLite)
+    so they can be referenced by short, user-typeable numbers at the CLI.
+    """
+
+    id: int | None = None
     title: NonEmptyTitle
     message: str | None = None
     status: ReminderStatus = ReminderStatus.PENDING
     target_type: ReminderTargetType = ReminderTargetType.GENERAL
-    target_id: str | None = None
+    target_id: int | None = None
     remind_at: datetime
     created_at: datetime = Field(default_factory=utc_now)

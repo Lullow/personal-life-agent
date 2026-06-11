@@ -5,11 +5,13 @@ import uuid
 from datetime import date, datetime
 
 from life_agent.db.database import get_connection
-from life_agent.models import ActivityLog, CalendarEvent, Task
+from life_agent.models import ActivityLog, CalendarEvent, Reminder, Task
 from life_agent.models.common import (
     ActivityType,
     EventCategory,
     Priority,
+    ReminderStatus,
+    ReminderTargetType,
     TaskCategory,
     TaskStatus,
 )
@@ -238,3 +240,107 @@ def list_activities(db_path: str | None = None) -> list[ActivityLog]:
         return [_row_to_activity(r) for r in rows]
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Reminder repository
+# ---------------------------------------------------------------------------
+
+def _row_to_reminder(row: sqlite3.Row) -> Reminder:
+    return Reminder(
+        id=row["id"],
+        title=row["title"],
+        message=row["message"],
+        remind_at=_parse_datetime(row["remind_at"]),  # type: ignore[arg-type]
+        target_type=ReminderTargetType(row["target_type"]),
+        target_id=row["target_id"],
+        status=ReminderStatus(row["status"]),
+        created_at=_parse_datetime(row["created_at"]),  # type: ignore[arg-type]
+    )
+
+
+def create_reminder(reminder: Reminder, db_path: str | None = None) -> Reminder:
+    """Insert a new reminder.  The database assigns an integer ``id``."""
+    conn = get_connection(db_path)
+    try:
+        cursor = conn.execute(
+            """INSERT INTO reminders
+               (title, message, remind_at, target_type, target_id, status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                reminder.title,
+                reminder.message,
+                _iso(reminder.remind_at),
+                str(reminder.target_type),
+                reminder.target_id,
+                str(reminder.status),
+                _iso(reminder.created_at),
+            ),
+        )
+        conn.commit()
+        new_id = cursor.lastrowid
+    finally:
+        conn.close()
+
+    return reminder.model_copy(update={"id": new_id})
+
+
+def list_reminders(
+    status: str | None = None,
+    db_path: str | None = None,
+) -> list[Reminder]:
+    """Return reminders ordered by ``remind_at`` (soonest first).
+
+    When *status* is provided, only reminders with that status are returned.
+    """
+    conn = get_connection(db_path)
+    try:
+        if status is None:
+            rows = conn.execute(
+                "SELECT * FROM reminders ORDER BY remind_at ASC"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM reminders WHERE status = ? ORDER BY remind_at ASC",
+                (status,),
+            ).fetchall()
+        return [_row_to_reminder(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def list_upcoming_reminders(db_path: str | None = None) -> list[Reminder]:
+    """Return pending reminders ordered by ``remind_at`` ascending."""
+    return list_reminders(status=str(ReminderStatus.PENDING), db_path=db_path)
+
+
+def get_reminder(reminder_id: int, db_path: str | None = None) -> Reminder | None:
+    """Fetch a single reminder by id, or *None* if not found."""
+    conn = get_connection(db_path)
+    try:
+        row = conn.execute(
+            "SELECT * FROM reminders WHERE id = ?", (reminder_id,)
+        ).fetchone()
+        return _row_to_reminder(row) if row else None
+    finally:
+        conn.close()
+
+
+def update_reminder_status(
+    reminder_id: int,
+    status: str,
+    db_path: str | None = None,
+) -> Reminder | None:
+    """Update a reminder's status and return the refreshed model."""
+    conn = get_connection(db_path)
+    try:
+        cursor = conn.execute(
+            "UPDATE reminders SET status = ? WHERE id = ?",
+            (status, reminder_id),
+        )
+        conn.commit()
+        if cursor.rowcount == 0:
+            return None
+    finally:
+        conn.close()
+    return get_reminder(reminder_id, db_path)

@@ -42,6 +42,19 @@ CREATE TABLE IF NOT EXISTS activities (
 );
 """
 
+REMINDERS_TABLE = """\
+CREATE TABLE IF NOT EXISTS reminders (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    title       TEXT    NOT NULL,
+    message     TEXT,
+    remind_at   TEXT    NOT NULL,
+    target_type TEXT    NOT NULL DEFAULT 'general',
+    target_id   INTEGER,
+    status      TEXT    NOT NULL DEFAULT 'pending',
+    created_at  TEXT    NOT NULL
+);
+"""
+
 
 def init_db(db_path: str | None = None) -> None:
     """Create all tables if they do not already exist."""
@@ -50,6 +63,7 @@ def init_db(db_path: str | None = None) -> None:
         conn.execute(TASKS_TABLE)
         conn.execute(EVENTS_TABLE)
         conn.execute(ACTIVITIES_TABLE)
+        conn.execute(REMINDERS_TABLE)
         conn.commit()
     finally:
         conn.close()

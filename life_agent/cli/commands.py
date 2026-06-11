@@ -192,3 +192,54 @@ def register_commands(app: typer.Typer) -> None:
         from life_agent.services.planner_service import get_upcoming_deadlines
 
         console.print(format_deadlines(get_upcoming_deadlines()))
+
+    # ------------------------------------------------------------------
+    # Reminder commands
+    # ------------------------------------------------------------------
+
+    @app.command("add-reminder")
+    def add_reminder(
+        title: str = typer.Argument(..., help="Short description of the reminder"),
+        at: str = typer.Option(..., "--at", help="Remind at (YYYY-MM-DD HH:MM)"),
+    ) -> None:
+        """Add a new reminder."""
+        from life_agent.services.reminder_service import add_reminder as svc_add_reminder
+
+        try:
+            remind_at = datetime.strptime(at, "%Y-%m-%d %H:%M")
+        except ValueError:
+            console.print(
+                f"[red]Invalid datetime format:[/red] {at}  (expected YYYY-MM-DD HH:MM)"
+            )
+            raise typer.Exit(code=1)
+
+        reminder = svc_add_reminder(title=title, remind_at=remind_at)
+        console.print(
+            f"[green]Added reminder #{reminder.id}:[/green] {reminder.title}"
+        )
+
+    @app.command("reminders")
+    def reminders() -> None:
+        """List pending reminders, sorted by remind_at ascending."""
+        from life_agent.cli.formatters import format_reminder_line
+        from life_agent.services.reminder_service import list_reminders as svc_list_reminders
+
+        pending = svc_list_reminders()
+        if not pending:
+            console.print("No pending reminders.")
+            return
+        for reminder in pending:
+            console.print(format_reminder_line(reminder))
+
+    @app.command("dismiss-reminder")
+    def dismiss_reminder(
+        reminder_id: int = typer.Argument(..., help="Reminder database id (e.g. from `reminders`)"),
+    ) -> None:
+        """Mark a reminder as dismissed by its database id."""
+        from life_agent.services.reminder_service import dismiss_reminder as svc_dismiss
+
+        updated = svc_dismiss(reminder_id)
+        if updated is None:
+            console.print(f"[red]No reminder found with id {reminder_id}.[/red]")
+            raise typer.Exit(code=1)
+        console.print(f"[green]Dismissed reminder #{updated.id}:[/green] {updated.title}")
