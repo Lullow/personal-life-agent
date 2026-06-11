@@ -164,3 +164,31 @@ def register_commands(app: typer.Typer) -> None:
             return
         for i, act in enumerate(all_activities, start=1):
             console.print(format_activity_line(i, act))
+
+    # ------------------------------------------------------------------
+    # Planner commands
+    # ------------------------------------------------------------------
+
+    @app.command("today")
+    def today() -> None:
+        """Show today's events, tasks due today, and other pending tasks."""
+        from life_agent.cli.formatters import format_today_agenda
+        from life_agent.services.planner_service import get_today_agenda
+
+        console.print(format_today_agenda(get_today_agenda()))
+
+    @app.command("week")
+    def week() -> None:
+        """Show events and task deadlines for the next 7 days."""
+        from life_agent.cli.formatters import format_week_agenda
+        from life_agent.services.planner_service import get_week_agenda
+
+        console.print(format_week_agenda(get_week_agenda()))
+
+    @app.command("deadlines")
+    def deadlines() -> None:
+        """Show pending tasks with due dates, sorted by date and priority."""
+        from life_agent.cli.formatters import format_deadlines
+        from life_agent.services.planner_service import get_upcoming_deadlines
+
+        console.print(format_deadlines(get_upcoming_deadlines()))
