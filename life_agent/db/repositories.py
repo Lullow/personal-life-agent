@@ -7,6 +7,7 @@ from datetime import date, datetime
 from life_agent.db.database import get_connection
 from life_agent.models import ActivityLog, CalendarEvent, Reminder, Task
 from life_agent.models.common import (
+    ActivityStatus,
     ActivityType,
     EventCategory,
     Priority,
@@ -196,6 +197,7 @@ def _row_to_activity(row: sqlite3.Row) -> ActivityLog:
         id=row["id"],
         title=row["title"],
         activity_type=ActivityType(row["activity_type"]),
+        status=ActivityStatus(row["status"]),
         duration_minutes=row["duration_minutes"],
         logged_at=_parse_datetime(row["logged_at"]),  # type: ignore[arg-type]
         notes=row["notes"],
@@ -210,13 +212,14 @@ def create_activity(activity: ActivityLog, db_path: str | None = None) -> Activi
     try:
         conn.execute(
             """INSERT INTO activities
-               (id, title, activity_type, duration_minutes, logged_at,
+               (id, title, activity_type, status, duration_minutes, logged_at,
                 notes, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 activity_id,
                 activity.title,
                 str(activity.activity_type),
+                str(activity.status),
                 activity.duration_minutes,
                 _iso(activity.logged_at),
                 activity.notes,
@@ -230,16 +233,65 @@ def create_activity(activity: ActivityLog, db_path: str | None = None) -> Activi
     return activity.model_copy(update={"id": activity_id})
 
 
-def list_activities(db_path: str | None = None) -> list[ActivityLog]:
-    """Return all activities ordered by logged time (newest first)."""
+def list_activities(
+    status: str | None = None,
+    db_path: str | None = None,
+) -> list[ActivityLog]:
+    """Return activities ordered by logged time (newest first).
+
+    When *status* is provided, only activities with that status are returned.
+    """
     conn = get_connection(db_path)
     try:
-        rows = conn.execute(
-            "SELECT * FROM activities ORDER BY logged_at DESC"
-        ).fetchall()
+        if status is None:
+            rows = conn.execute(
+                "SELECT * FROM activities ORDER BY logged_at DESC"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM activities WHERE status = ? ORDER BY logged_at DESC",
+                (status,),
+            ).fetchall()
         return [_row_to_activity(r) for r in rows]
     finally:
         conn.close()
+
+
+def list_planned_activities(db_path: str | None = None) -> list[ActivityLog]:
+    """Return planned activities ordered by logged time (newest first)."""
+    return list_activities(status=str(ActivityStatus.PLANNED), db_path=db_path)
+
+
+def get_activity(activity_id: str, db_path: str | None = None) -> ActivityLog | None:
+    """Fetch a single activity by id, or *None* if not found."""
+    conn = get_connection(db_path)
+    try:
+        row = conn.execute(
+            "SELECT * FROM activities WHERE id = ?", (activity_id,)
+        ).fetchone()
+        return _row_to_activity(row) if row else None
+    finally:
+        conn.close()
+
+
+def update_activity_status(
+    activity_id: str,
+    status: str,
+    db_path: str | None = None,
+) -> ActivityLog | None:
+    """Update an activity's status and return the refreshed model."""
+    conn = get_connection(db_path)
+    try:
+        cursor = conn.execute(
+            "UPDATE activities SET status = ? WHERE id = ?",
+            (status, activity_id),
+        )
+        conn.commit()
+        if cursor.rowcount == 0:
+            return None
+    finally:
+        conn.close()
+    return get_activity(activity_id, db_path)
 
 
 # ---------------------------------------------------------------------------

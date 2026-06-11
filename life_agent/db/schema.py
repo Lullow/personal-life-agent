@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS activities (
     id               TEXT PRIMARY KEY,
     title            TEXT    NOT NULL,
     activity_type    TEXT    NOT NULL DEFAULT 'other',
+    status           TEXT    NOT NULL DEFAULT 'completed',
     duration_minutes INTEGER,
     logged_at        TEXT    NOT NULL,
     notes            TEXT,

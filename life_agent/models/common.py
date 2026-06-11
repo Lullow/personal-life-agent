@@ -58,6 +58,19 @@ class ActivityType(StrEnum):
     OTHER = "other"
 
 
+class ActivityStatus(StrEnum):
+    """Lifecycle status for an activity log.
+
+    Manual logs default to ``completed`` (the user is recording something
+    already done), while activities extracted from "ska träna"-style plans
+    are stored as ``planned`` until completed.
+    """
+
+    PLANNED = "planned"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+
 class ReminderStatus(StrEnum):
     """Delivery state for reminders."""
 

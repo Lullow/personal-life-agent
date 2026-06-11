@@ -36,7 +36,7 @@ def _is_empty_db() -> bool:
     return (
         list_tasks(db) == []
         and list_events(db) == []
-        and list_activities(db) == []
+        and list_activities(db_path=db) == []
         and list_reminders(status=None, db_path=db) == []
     )
 
@@ -59,7 +59,7 @@ def test_add_y_saves_items():
     result = runner.invoke(app, ["add", TRAINING_TEXT], input="y\n")
     assert result.exit_code == 0
     db = _db_path()
-    assert len(list_activities(db)) == 1
+    assert len(list_activities(db_path=db)) == 1
     assert len(list_reminders(status=None, db_path=db)) == 1
 
 

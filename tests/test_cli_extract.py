@@ -53,7 +53,7 @@ def test_extract_does_not_write_to_database():
     db = _db_path()
     assert list_tasks(db) == []
     assert list_events(db) == []
-    assert list_activities(db) == []
+    assert list_activities(db_path=db) == []
     assert list_reminders(status=None, db_path=db) == []
 
 

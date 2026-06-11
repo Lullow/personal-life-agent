@@ -8,6 +8,7 @@ must never write to the database without explicit confirmation.
 
 from life_agent.agent.safety import assert_confirmed
 from life_agent.models.common import (
+    ActivityStatus,
     ActivityType,
     EventCategory,
     Priority,
@@ -163,6 +164,7 @@ def save_confirmed_extraction(
             duration_minutes=activity.duration_minutes,
             notes=activity.notes,
             logged_at=activity.logged_at,
+            status=ActivityStatus.PLANNED,
             db_path=db_path,
         )
         saved.append(SavedItemSummary(item_type="activity", title=title, saved=True))

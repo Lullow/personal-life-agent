@@ -314,3 +314,59 @@ def register_commands(app: typer.Typer) -> None:
 
         save_result = save_confirmed_extraction(result, confirmed=True)
         console.print(format_save_result(save_result))
+
+    @app.command("complete")
+    def complete(
+        text: str = typer.Argument(..., help="Natural language completion phrase"),
+        yes: Annotated[
+            bool,
+            typer.Option("--yes", "-y", help="Skip the prompt and complete immediately"),
+        ] = False,
+    ) -> None:
+        """Mark a planned activity as completed from natural language."""
+        from life_agent.agent.safety import is_affirmative
+        from life_agent.cli.formatters import format_completion_candidate
+        from life_agent.services.completion_service import (
+            complete_activity,
+            find_completion_candidate,
+            is_completion_phrase,
+        )
+
+        if not text or not text.strip():
+            console.print("[red]No text provided.[/red]")
+            raise typer.Exit(code=1)
+
+        if not is_completion_phrase(text):
+            console.print(
+                "[yellow]That doesn't look like a completion phrase "
+                "(e.g. \"Jag har tränat klart\").[/yellow]"
+            )
+            return
+
+        candidate = find_completion_candidate(text)
+        if candidate is None:
+            console.print("[yellow]No planned activity found to complete.[/yellow]")
+            return
+
+        console.print(format_completion_candidate(candidate))
+        console.print()
+
+        if yes:
+            confirmed = True
+        else:
+            answer = typer.prompt(
+                "Mark this activity as completed? [y/N]",
+                default="",
+                show_default=False,
+            )
+            confirmed = is_affirmative(answer)
+
+        if not confirmed:
+            console.print("[yellow]Cancelled. Nothing was updated.[/yellow]")
+            return
+
+        updated = complete_activity(candidate.id, confirmed=True)
+        if updated is None:
+            console.print("[red]Could not update the activity.[/red]")
+            raise typer.Exit(code=1)
+        console.print(f"[green]Completed:[/green] {updated.title}")

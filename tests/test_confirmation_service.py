@@ -20,7 +20,7 @@ from life_agent.schemas.extraction import (
     ExtractedTask,
     ExtractionResult,
 )
-from life_agent.models.common import ActivityType
+from life_agent.models.common import ActivityStatus, ActivityType
 from life_agent.services.confirmation_service import (
     build_confirmation_proposal,
     save_confirmed_extraction,
@@ -82,7 +82,7 @@ def test_build_proposal_does_not_write(db_path):
     build_confirmation_proposal(_full_result())
     assert list_tasks(db_path) == []
     assert list_events(db_path) == []
-    assert list_activities(db_path) == []
+    assert list_activities(db_path=db_path) == []
     assert list_reminders(status=None, db_path=db_path) == []
 
 
@@ -102,15 +102,16 @@ def test_save_persists_all_item_types(db_path):
 
     assert len(list_tasks(db_path)) == 1
     assert len(list_events(db_path)) == 1
-    assert len(list_activities(db_path)) == 1
+    assert len(list_activities(db_path=db_path)) == 1
     assert len(list_reminders(status=None, db_path=db_path)) == 1
 
 
 def test_save_preserves_activity_logged_at_and_duration(db_path):
     save_confirmed_extraction(_full_result(), confirmed=True, db_path=db_path)
-    activities = list_activities(db_path)
+    activities = list_activities(db_path=db_path)
     assert activities[0].duration_minutes == 60
     assert activities[0].logged_at == datetime(2026, 6, 12, 12, 0)
+    assert activities[0].status == ActivityStatus.PLANNED
 
 
 def test_save_skips_incomplete_items_with_reason(db_path):

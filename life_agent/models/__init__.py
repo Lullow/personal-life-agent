@@ -2,6 +2,7 @@
 
 from life_agent.models.activity import ActivityLog
 from life_agent.models.common import (
+    ActivityStatus,
     ActivityType,
     EventCategory,
     FamilyRole,
@@ -23,6 +24,7 @@ from life_agent.models.user import User
 
 __all__ = [
     "ActivityLog",
+    "ActivityStatus",
     "ActivityType",
     "CalendarEvent",
     "EventCategory",

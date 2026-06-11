@@ -5,6 +5,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from life_agent.models.common import (
+    ActivityStatus,
     ActivityType,
     NonEmptyTitle,
     NonNegativeMinutes,
@@ -18,6 +19,7 @@ class ActivityLog(BaseModel):
     id: str | None = None
     title: NonEmptyTitle
     activity_type: ActivityType = ActivityType.OTHER
+    status: ActivityStatus = ActivityStatus.COMPLETED
     duration_minutes: NonNegativeMinutes = None
     logged_at: datetime = Field(default_factory=utc_now)
     notes: str | None = None

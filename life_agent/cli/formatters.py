@@ -1,6 +1,7 @@
 """Readable terminal output formatting for domain models and agendas."""
 
 from life_agent.models import ActivityLog, CalendarEvent, Reminder, Task
+from life_agent.models.common import ActivityStatus
 from life_agent.schemas.confirmation import (
     ConfirmationProposal,
     ConfirmationSaveResult,
@@ -22,7 +23,27 @@ def format_event_line(index: int, event: CalendarEvent) -> str:
 
 def format_activity_line(index: int, activity: ActivityLog) -> str:
     mins = f"{activity.duration_minutes}min" if activity.duration_minutes else "-"
-    return f"[{index}] {activity.activity_type} {mins} - {activity.title}"
+    parts = [
+        f"[{index}]",
+        str(activity.status),
+        str(activity.activity_type),
+        mins,
+    ]
+    # Planned activities carry a meaningful scheduled time; show it.
+    if activity.status == ActivityStatus.PLANNED:
+        parts.append(activity.logged_at.strftime("%Y-%m-%d %H:%M"))
+    parts.append(f"- {activity.title}")
+    return " ".join(parts)
+
+
+def format_completion_candidate(activity: ActivityLog) -> str:
+    """Render the planned activity matched for completion."""
+    when = activity.logged_at.strftime("%Y-%m-%d %H:%M")
+    mins = f"{activity.duration_minutes}min" if activity.duration_minutes else "-"
+    return (
+        f"Matched planned activity:\n"
+        f"  {activity.status} {activity.activity_type} {mins} {when} - {activity.title}"
+    )
 
 
 def format_reminder_line(reminder: Reminder) -> str:
