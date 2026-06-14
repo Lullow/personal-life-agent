@@ -95,7 +95,9 @@ def test_add_saved_reminder_appears_in_reminders():
     runner.invoke(app, ["add", TRAINING_TEXT], input="y\n")
     listing = runner.invoke(app, ["reminders"])
     assert listing.exit_code == 0
-    assert "2026-06-12 09:00" in listing.stdout
+    # "imorgon" resolves relative to today, so don't hardcode the date.
+    assert "09:00" in listing.stdout
+    assert "pending" in listing.stdout
 
 
 def test_add_empty_text_exits_cleanly():

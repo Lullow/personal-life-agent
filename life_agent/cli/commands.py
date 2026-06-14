@@ -370,3 +370,134 @@ def register_commands(app: typer.Typer) -> None:
             console.print("[red]Could not update the activity.[/red]")
             raise typer.Exit(code=1)
         console.print(f"[green]Completed:[/green] {updated.title}")
+
+    # ------------------------------------------------------------------
+    # Interactive chat mode
+    # ------------------------------------------------------------------
+
+    @app.command("chat")
+    def chat() -> None:
+        """Start an interactive chat session."""
+        from life_agent.agent.safety import is_affirmative
+        from life_agent.cli.formatters import (
+            format_completion_candidate,
+            format_confirmation_proposal,
+            format_save_result,
+        )
+        from life_agent.services.chat_service import (
+            GREETING,
+            HELP_TEXT,
+            UNKNOWN_TEXT,
+            ChatIntent,
+            classify_intent,
+            get_deadlines_response,
+            get_reminders_response,
+            get_today_response,
+            get_week_response,
+        )
+        from life_agent.services.completion_service import (
+            complete_activity,
+            find_completion_candidate,
+        )
+        from life_agent.services.confirmation_service import (
+            build_confirmation_proposal,
+            save_confirmed_extraction,
+        )
+        from life_agent.services.extraction_service import extract_from_text
+
+        console.print(GREETING)
+
+        while True:
+            try:
+                user_input = console.input("\n[bold]You:[/bold] ")
+            except (EOFError, KeyboardInterrupt):
+                console.print("\nBye!")
+                break
+
+            stripped = user_input.strip()
+            if not stripped:
+                continue
+
+            intent = classify_intent(stripped)
+
+            if intent == ChatIntent.QUIT:
+                console.print("Bye!")
+                break
+
+            if intent == ChatIntent.HELP:
+                console.print(HELP_TEXT)
+                continue
+
+            if intent == ChatIntent.TODAY:
+                console.print(get_today_response())
+                continue
+
+            if intent == ChatIntent.WEEK:
+                console.print(get_week_response())
+                continue
+
+            if intent == ChatIntent.DEADLINES:
+                console.print(get_deadlines_response())
+                continue
+
+            if intent == ChatIntent.REMINDERS:
+                console.print(get_reminders_response())
+                continue
+
+            if intent == ChatIntent.ADD_ITEMS:
+                result = extract_from_text(stripped)
+                proposal = build_confirmation_proposal(result)
+                console.print(format_confirmation_proposal(proposal))
+                console.print()
+
+                if proposal.saveable_count == 0:
+                    console.print(
+                        "[yellow]Nothing to save. No items were stored.[/yellow]"
+                    )
+                    continue
+
+                answer = console.input("Save this? [y/N] ")
+                if is_affirmative(answer):
+                    save_result = save_confirmed_extraction(
+                        result, confirmed=True
+                    )
+                    console.print(format_save_result(save_result))
+                else:
+                    console.print(
+                        "[yellow]Cancelled. Nothing was saved.[/yellow]"
+                    )
+                continue
+
+            if intent == ChatIntent.COMPLETE:
+                candidate = find_completion_candidate(stripped)
+                if candidate is None:
+                    console.print(
+                        "[yellow]No planned activity found to complete.[/yellow]"
+                    )
+                    continue
+
+                console.print(format_completion_candidate(candidate))
+                console.print()
+                answer = console.input(
+                    "Mark this activity as completed? [y/N] "
+                )
+                if is_affirmative(answer):
+                    updated = complete_activity(
+                        candidate.id, confirmed=True
+                    )
+                    if updated is None:
+                        console.print(
+                            "[red]Could not update the activity.[/red]"
+                        )
+                    else:
+                        console.print(
+                            f"[green]Completed:[/green] {updated.title}"
+                        )
+                else:
+                    console.print(
+                        "[yellow]Cancelled. Nothing was updated.[/yellow]"
+                    )
+                continue
+
+            # UNKNOWN
+            console.print(UNKNOWN_TEXT)

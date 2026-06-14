@@ -43,6 +43,7 @@ This MVP is intentionally focused and runs entirely offline:
 | Reminders | `add-reminder`, `reminders`, `dismiss-reminder` |
 | Planner | `today`, `week`, `deadlines` |
 | Natural language | `extract` (preview), `add` (confirm + save), `complete` (confirm + update) |
+| Interactive | `chat` — conversational loop with routing to all of the above |
 
 ## What is intentionally not included
 
@@ -109,7 +110,15 @@ python -m life_agent deadlines
 python -m life_agent extract "Möte på Odenplan kl 14 imorgon"          # read-only preview
 python -m life_agent add "Jag ska träna rygg och biceps kl 12 imorgon, träningen ska vara 1h och påminn mig kl 09."
 python -m life_agent complete "Jag har tränat klart"
+
+# Interactive chat mode
+python -m life_agent chat
 ```
+
+In chat mode you can type naturally — "vad har jag idag", plan items, or
+complete activities — and the assistant routes your message to the right
+service.  All the same safety rules apply: write operations always ask for
+confirmation first.
 
 For a full, reproducible walkthrough see [docs/demo.md](docs/demo.md).
 
@@ -120,6 +129,8 @@ For a full, reproducible walkthrough see [docs/demo.md](docs/demo.md).
 - `extract` is always read-only — it shows a structured preview and saves nothing.
 - `add` and `complete` show a proposal and only persist changes after you answer
   `y` / `yes`. Pressing Enter or answering `n` / `no` cancels.
+- `chat` mode applies the same rules: planning text asks `Save this? [y/N]`,
+  and completion text asks `Mark this activity as completed? [y/N]`.
 - This rule is enforced in code (`life_agent/agent/safety.py`), not just by
   convention.
 
@@ -191,7 +202,7 @@ personal-life-agent/
 ├── life_agent/
 │   ├── cli/             # Typer CLI commands and output formatters
 │   ├── services/        # Task, event, activity, reminder, planner,
-│   │                    #   extraction, confirmation, completion services
+│   │                    #   extraction, confirmation, completion, chat services
 │   ├── db/              # SQLite connection, schema, repositories
 │   ├── models/          # Pydantic domain models + shared enums
 │   ├── schemas/         # Extraction / planner / confirmation schemas

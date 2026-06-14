@@ -186,3 +186,44 @@ python -m life_agent extract "Jag ska till tandläkaren på fredag kl 10"
 Vague times such as *"på söndag kväll"* are **not** invented into an exact
 timestamp; the extractor records a clarifying question instead. As always,
 `extract` is read-only and `add` asks `Save this? [y/N]` before writing.
+
+## Interactive chat mode
+
+Instead of running individual commands, you can use `chat` for a conversational
+loop that routes messages to the right service:
+
+```bash
+python -m life_agent chat
+```
+
+```
+Hello! I am your personal life agent.
+Type a message, or /help for available commands.
+
+You: vad har jag idag
+Today (2026-06-14):
+
+Nothing on the agenda.
+
+You: jag ska träna rygg och biceps kl 12 imorgon, träningen ska vara 1h och påminn mig kl 09
+Proposed to save:
+...
+Save this? [y/N] y
+Saved 2 item(s):
+  + activity: Träna rygg och biceps
+  + reminder: Påminnelse
+
+You: jag har tränat klart
+Matched planned activity:
+  planned gym 60min 2026-06-15 12:00 - Träna rygg och biceps
+
+Mark this activity as completed? [y/N] y
+Completed: Träna rygg och biceps
+
+You: /quit
+Bye!
+```
+
+Type `/help` for a full list of phrases the chat mode recognises. The same
+safety rules apply: planning text asks for confirmation before saving, and
+completion text asks before updating.

@@ -29,8 +29,8 @@ Supporting modules sit alongside these layers:
 ## CLI layer (`life_agent/cli/`)
 
 - `commands.py` registers every Typer command (`init`, `add-task`, `today`,
-  `extract`, `add`, `complete`, …). Commands are thin: they parse arguments,
-  call a service, and print results.
+  `extract`, `add`, `complete`, `chat`, …). Commands are thin: they parse
+  arguments, call a service, and print results.
 - `formatters.py` turns models, agendas, extraction results, and proposals into
   readable terminal text. Keeping formatting here means services stay free of
   presentation concerns.
@@ -52,6 +52,8 @@ The services are the orchestration layer between the CLI and the database:
   only when confirmed, persists each item via the services above.
 - `completion_service.py` — detects a completion phrase, finds the relevant
   planned activity, and (when confirmed) marks it completed.
+- `chat_service.py` — deterministic intent classifier and response helpers for
+  interactive chat mode (see [Chat mode](#chat-mode)).
 
 ## Repository / database layer (`life_agent/db/`)
 
@@ -154,6 +156,30 @@ The `complete` command marks a previously planned activity as done:
   reached without confirmation. Both `save_confirmed_extraction` and
   `complete_activity` call it first, so the guarantee cannot be bypassed by
   accident.
+
+## Chat mode
+
+`python -m life_agent chat` starts a simple interactive loop. The chat service
+classifies each message into an intent:
+
+| Intent | Example phrases | Behaviour |
+|--------|----------------|-----------|
+| `/help` | `/help`, `help` | Print available commands |
+| `/quit` | `/quit`, `/exit` | Exit the loop |
+| TODAY | "vad har jag idag", "dagens plan" | Show today's agenda (read-only) |
+| WEEK | "vad händer i veckan", "veckoplan" | Show week view (read-only) |
+| DEADLINES | "visa deadlines" | Show upcoming deadlines (read-only) |
+| REMINDERS | "visa påminnelser", "mina reminders" | Show pending reminders (read-only) |
+| ADD_ITEMS | "jag ska träna…", "påminn mig…" | Extract, show proposal, ask `Save this? [y/N]` |
+| COMPLETE | "jag har tränat klart" | Find planned activity, ask `Mark as completed? [y/N]` |
+| UNKNOWN | anything else | Show helpful fallback with examples |
+
+Classification is deterministic (regex-based, no LLM). Read-only intents
+produce output immediately. Write intents go through the same confirmation flow
+as the `add` and `complete` commands — the safety rule is always enforced.
+
+The chat service has no long-term memory: each message is classified and handled
+independently.
 
 ## Why small layers
 
