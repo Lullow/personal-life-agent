@@ -11,6 +11,10 @@ DEFAULT_DB_PATH = Path("data") / "life_agent.db"
 EXTRACTION_MODE_DETERMINISTIC = "deterministic"
 EXTRACTION_MODE_LLM = "llm"
 
+# Agent router modes
+ROUTER_MODE_DETERMINISTIC = "deterministic"
+ROUTER_MODE_LLM = "llm"
+
 
 class Settings(BaseModel):
     """Minimal settings for the MVP foundation."""
@@ -23,6 +27,12 @@ class Settings(BaseModel):
     extraction_mode: str = Field(
         default=EXTRACTION_MODE_DETERMINISTIC,
         alias="LIFE_AGENT_EXTRACTION_MODE",
+    )
+
+    # Agent router mode
+    agent_router_mode: str = Field(
+        default=ROUTER_MODE_DETERMINISTIC,
+        alias="LIFE_AGENT_AGENT_ROUTER_MODE",
     )
 
     # Optional LLM provider (OpenAI-compatible). Unset by default so the app
@@ -43,6 +53,9 @@ class Settings(BaseModel):
             DB_PATH=os.getenv("DB_PATH", str(DEFAULT_DB_PATH)),
             LIFE_AGENT_EXTRACTION_MODE=os.getenv(
                 "LIFE_AGENT_EXTRACTION_MODE", EXTRACTION_MODE_DETERMINISTIC
+            ),
+            LIFE_AGENT_AGENT_ROUTER_MODE=os.getenv(
+                "LIFE_AGENT_AGENT_ROUTER_MODE", ROUTER_MODE_DETERMINISTIC
             ),
             LIFE_AGENT_LLM_PROVIDER=os.getenv(
                 "LIFE_AGENT_LLM_PROVIDER", "openai_compatible"

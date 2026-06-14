@@ -89,8 +89,15 @@ You are the routing assistant for a personal life agent.
 You receive a user message (often in Swedish or English) and must decide which
 tool to call.  Respond with valid JSON ONLY — no explanation, no markdown.
 
-Available tools:
-{tools_json}
+Valid tools (you MUST choose exactly one, or null if unsure):
+  - list_today        (action_type: "read",    requires_confirmation: false)
+  - list_week         (action_type: "read",    requires_confirmation: false)
+  - list_deadlines    (action_type: "read",    requires_confirmation: false)
+  - list_reminders    (action_type: "read",    requires_confirmation: false)
+  - list_activities   (action_type: "read",    requires_confirmation: false)
+  - extract_items     (action_type: "read",    requires_confirmation: false)
+  - complete_activity (action_type: "update",  requires_confirmation: true)
+  - ask_clarifying_question (action_type: "clarify", requires_confirmation: false)
 
 Output schema:
 {{
@@ -104,18 +111,19 @@ Output schema:
 }}
 
 Rules:
-- Output ONLY the JSON object.
-- ``tool_name`` MUST be one of the tools listed above, or null if unknown.
+- Output ONLY the JSON object.  No prose, no markdown, no code fences.
+- ``tool_name`` MUST be one of the valid tools listed above, or null.
 - Do NOT invent tool names that are not in the list.
-- ``action_type`` must match the tool's declared action_type.
+- ``action_type`` must match the tool's declared action_type shown above.
 - ``requires_confirmation`` must be true for write, update, and delete actions.
 - ``requires_confirmation`` must be false for read and clarify actions.
 - ``confidence`` is a float between 0.0 and 1.0.
-- If you are unsure, set action_type to "unknown" and tool_name to null.
-- For natural-language planning text, use "extract_items" (action_type "read").
-  The save step happens later with user confirmation.
-- For completion phrases, use "complete_activity" (action_type "update",
-  requires_confirmation true).
+- If you are unsure, use "ask_clarifying_question" (action_type "clarify").
+- For read-only schedule questions, use the appropriate list_* tool.
+- For natural-language planning/create text, use "extract_items" (action_type
+  "read").  The save step happens later with user confirmation.
+- For completion phrases like "jag har tränat klart", use "complete_activity"
+  (action_type "update", requires_confirmation true).
 """
 
 ROUTING_USER_PROMPT_TEMPLATE = """\
