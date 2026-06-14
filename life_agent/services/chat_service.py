@@ -1,19 +1,20 @@
 """Deterministic intent classifier and response builder for chat mode.
 
 The chat service takes a single user message and classifies it into one of a
-small set of intents.  Read-only intents (TODAY, WEEK, DEADLINES, REMINDERS)
-produce a response immediately; write intents (ADD_ITEMS, COMPLETE) return the
-classification so the CLI loop can handle the confirmation prompt.
+small set of intents.  Slash commands (/help, /quit, /exit) are handled
+directly; everything else is delegated to :class:`AgentRouter` so that the
+routing logic is shared with the agent runtime.
 
 This service never writes to the database.  Persistence always goes through
 the existing confirmation / completion services — and only after the user
 explicitly confirms.
 """
 
-import re
+from __future__ import annotations
+
 from enum import StrEnum
 
-from life_agent.services.completion_service import is_completion_phrase
+from life_agent.agent.router import AgentRouter
 
 
 class ChatIntent(StrEnum):
@@ -30,64 +31,23 @@ class ChatIntent(StrEnum):
     UNKNOWN = "unknown"
 
 
-# ---------------------------------------------------------------------------
-# Pattern groups — order matters: first match wins
-# ---------------------------------------------------------------------------
+_TOOL_TO_INTENT: dict[str | None, ChatIntent] = {
+    "list_today": ChatIntent.TODAY,
+    "list_week": ChatIntent.WEEK,
+    "list_deadlines": ChatIntent.DEADLINES,
+    "list_reminders": ChatIntent.REMINDERS,
+    "extract_items": ChatIntent.ADD_ITEMS,
+    "complete_activity": ChatIntent.COMPLETE,
+}
 
-_TODAY_PATTERNS = [
-    re.compile(p, re.IGNORECASE)
-    for p in (
-        r"\bvad\s+har\s+jag\s+idag\b",
-        r"\bvad\s+händer\s+idag\b",
-        r"\bdagens\s+plan\b",
-        r"\bvisa\s+idag\b",
-        r"\bshow\s+today\b",
-        r"^\s*today\s*[.?!]?\s*$",
-        r"^\s*idag\s*[.?!]?\s*$",
-    )
-]
-
-_WEEK_PATTERNS = [
-    re.compile(p, re.IGNORECASE)
-    for p in (
-        r"\bvad\s+händer\s+i\s+veckan\b",
-        r"\bvisa\s+veckan\b",
-        r"\bveckoplan\b",
-        r"\bveckans?\s+plan\b",
-        r"\bshow\s+week\b",
-        r"\bveckan\b",
-    )
-]
-
-_DEADLINE_PATTERNS = [
-    re.compile(p, re.IGNORECASE)
-    for p in (
-        r"\bvisa\s+deadlines?\b",
-        r"\bvad\s+har\s+jag\s+för\s+deadlines?\b",
-        r"\bdeadlines?\b",
-        r"\bshow\s+deadlines?\b",
-    )
-]
-
-_REMINDER_PATTERNS = [
-    re.compile(p, re.IGNORECASE)
-    for p in (
-        r"\bvisa\s+påminnelser\b",
-        r"\bmina\s+(?:påminnelser|reminders)\b",
-        r"\bvisa\s+reminders\b",
-        r"\bshow\s+reminders\b",
-        r"\bpåminnelser\b",
-    )
-]
+_default_router = AgentRouter()
 
 
-def classify_intent(text: str) -> ChatIntent:
+def classify_intent(text: str, *, router: AgentRouter | None = None) -> ChatIntent:
     """Classify a single user message into a chat intent.
 
-    The function is pure and deterministic — it does not touch the database or
-    make any side effects.  The ordering is intentional: slash-commands first,
-    then read-only queries (to avoid accidentally routing "visa idag" into
-    extraction), then write intents, then fallback.
+    Slash commands are handled locally; everything else is delegated to the
+    :class:`AgentRouter` so that the routing patterns are defined in one place.
     """
     stripped = text.strip()
     if not stripped:
@@ -100,53 +60,10 @@ def classify_intent(text: str) -> ChatIntent:
     if lower in ("/quit", "/exit", "quit", "exit"):
         return ChatIntent.QUIT
 
-    # Read-only planner queries (checked before extraction triggers so that
-    # short words like "idag" match the planner, not the extractor).
-    for p in _TODAY_PATTERNS:
-        if p.search(lower):
-            return ChatIntent.TODAY
-    for p in _WEEK_PATTERNS:
-        if p.search(lower):
-            return ChatIntent.WEEK
-    for p in _DEADLINE_PATTERNS:
-        if p.search(lower):
-            return ChatIntent.DEADLINES
-    for p in _REMINDER_PATTERNS:
-        if p.search(lower):
-            return ChatIntent.REMINDERS
+    r = router or _default_router
+    decision = r.route(stripped)
 
-    if is_completion_phrase(stripped):
-        return ChatIntent.COMPLETE
-
-    # Planning phrases that would produce at least one extracted item.
-    if _looks_like_planning(lower):
-        return ChatIntent.ADD_ITEMS
-
-    return ChatIntent.UNKNOWN
-
-
-def _looks_like_planning(lower: str) -> bool:
-    """Heuristic: does the text look like it would produce extracted items?"""
-    planning_markers = (
-        r"\bjag\s+ska\b",
-        r"\bjag\s+behöver\b",
-        r"\bjag\s+måste\b",
-        r"\bjag\s+har\s+möte\b",
-        r"\bjag\s+vill\b",
-        r"\bpåminn\s+mig\b",
-        r"\bkom\s+ihåg\b",
-        r"\bglöm\s+inte\b",
-        r"\bträna\b",
-        r"\bgymma\b",
-        r"\bmöte\b",
-        r"\bplugg",
-        r"\bhandla\b",
-        r"\bbetala\b",
-        r"\bboka\b",
-        r"\btandläkare",
-        r"\bläkare\b",
-    )
-    return any(re.search(m, lower) for m in planning_markers)
+    return _TOOL_TO_INTENT.get(decision.tool_name, ChatIntent.UNKNOWN)
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-"""Agent prompts, decisions, tools, policy, and routing."""
+"""Agent prompts, decisions, tools, policy, routing, and runtime."""
 
 from life_agent.agent.decisions import AgentDecision
 from life_agent.agent.policy import requires_confirmation, validate_decision_safety
@@ -9,6 +9,7 @@ from life_agent.agent.prompts import (
     ROUTING_USER_PROMPT_TEMPLATE,
 )
 from life_agent.agent.router import AgentRouter
+from life_agent.agent.runtime import AgentRuntime, RuntimeResponse
 from life_agent.agent.tools import (
     ToolDefinition,
     ToolRegistry,
@@ -22,6 +23,8 @@ __all__ = [
     "ROUTING_USER_PROMPT_TEMPLATE",
     "AgentDecision",
     "AgentRouter",
+    "AgentRuntime",
+    "RuntimeResponse",
     "ToolDefinition",
     "ToolRegistry",
     "build_default_tool_registry",
