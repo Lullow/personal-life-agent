@@ -110,6 +110,13 @@ class TestDefaultRegistry:
         assert t.action_type == "clarify"
         assert t.requires_confirmation is False
 
+    def test_query_saved_data_is_read_only(self):
+        reg = build_default_tool_registry()
+        t = reg.get("query_saved_data")
+        assert t is not None
+        assert t.action_type == "read"
+        assert t.requires_confirmation is False
+
     def test_tool_count(self):
         reg = build_default_tool_registry()
-        assert len(reg.list_tools()) == 9
+        assert len(reg.list_tools()) == 10

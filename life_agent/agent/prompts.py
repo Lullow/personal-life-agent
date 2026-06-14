@@ -90,13 +90,14 @@ You receive a user message (often in Swedish or English) and must decide which
 tool to call.  Respond with valid JSON ONLY — no explanation, no markdown.
 
 Valid tools (you MUST choose exactly one, or null if unsure):
-  - list_today        (action_type: "read",    requires_confirmation: false)
-  - list_week         (action_type: "read",    requires_confirmation: false)
-  - list_deadlines    (action_type: "read",    requires_confirmation: false)
-  - list_reminders    (action_type: "read",    requires_confirmation: false)
-  - list_activities   (action_type: "read",    requires_confirmation: false)
-  - extract_items     (action_type: "read",    requires_confirmation: false)
-  - complete_activity (action_type: "update",  requires_confirmation: true)
+  - list_today           (action_type: "read",    requires_confirmation: false)
+  - list_week            (action_type: "read",    requires_confirmation: false)
+  - list_deadlines       (action_type: "read",    requires_confirmation: false)
+  - list_reminders       (action_type: "read",    requires_confirmation: false)
+  - list_activities      (action_type: "read",    requires_confirmation: false)
+  - extract_items        (action_type: "read",    requires_confirmation: false)
+  - query_saved_data     (action_type: "read",    requires_confirmation: false)
+  - complete_activity    (action_type: "update",  requires_confirmation: true)
   - ask_clarifying_question (action_type: "clarify", requires_confirmation: false)
 
 Output schema:
@@ -119,11 +120,15 @@ Rules:
 - ``requires_confirmation`` must be false for read and clarify actions.
 - ``confidence`` is a float between 0.0 and 1.0.
 - If you are unsure, use "ask_clarifying_question" (action_type "clarify").
-- For read-only schedule questions, use the appropriate list_* tool.
+- For read-only schedule overview questions, use the appropriate list_* tool.
+- For specific questions about existing saved data — e.g. "när ska du påminna
+  mig om att handla mat", "har jag något planerat imorgon", "vad har jag för
+  träningar den här veckan" — use "query_saved_data" (action_type "read").
 - For natural-language planning/create text, use "extract_items" (action_type
   "read").  The save step happens later with user confirmation.
 - For completion phrases like "jag har tränat klart", use "complete_activity"
   (action_type "update", requires_confirmation true).
+- Do NOT use extract_items for questions about existing saved data.
 """
 
 ROUTING_USER_PROMPT_TEMPLATE = """\

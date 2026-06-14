@@ -110,6 +110,32 @@ class TestUnknownDispatch:
 
 
 # ------------------------------------------------------------------
+# query_saved_data dispatch
+# ------------------------------------------------------------------
+
+
+class TestQuerySavedDataDispatch:
+    def test_query_returns_display_kind(self, rt: AgentRuntime):
+        resp = rt.handle_message("vilken tid ska du påminna mig om att handla mat")
+        assert resp.kind == "display"
+        assert resp.decision.tool_name == "query_saved_data"
+
+    def test_query_does_not_require_confirmation(self, rt: AgentRuntime):
+        resp = rt.handle_message("har jag något planerat imorgon")
+        assert resp.kind == "display"
+        assert resp.decision.requires_confirmation is False
+
+    def test_query_returns_string(self, rt: AgentRuntime):
+        resp = rt.handle_message("vad har jag för träningar den här veckan")
+        assert isinstance(resp.text, str)
+        assert len(resp.text) > 0
+
+    def test_question_does_not_create_extraction_proposal(self, rt: AgentRuntime):
+        resp = rt.handle_message("vilken tid ska du påminna mig om att handla mat")
+        assert resp.kind != "needs_confirmation"
+
+
+# ------------------------------------------------------------------
 # Router is accessible
 # ------------------------------------------------------------------
 

@@ -10,6 +10,7 @@ from life_agent.services.chat_service import (
     ChatIntent,
     classify_intent,
     get_deadlines_response,
+    get_query_saved_data_response,
     get_reminders_response,
     get_today_response,
     get_week_response,
@@ -152,6 +153,33 @@ def test_add_items_intent(text):
 )
 def test_complete_intent(text):
     assert classify_intent(text) == ChatIntent.COMPLETE
+
+
+# ---------------------------------------------------------------------------
+# Saved-data Q&A (query_saved_data)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "vilken tid ska du påminna mig om att handla mat",
+        "när ska du påminna mig om träningen",
+        "har jag något planerat imorgon",
+        "vad har jag för träningar den här veckan",
+    ],
+)
+def test_query_saved_data_intent(text):
+    assert classify_intent(text) == ChatIntent.QUERY_SAVED_DATA
+
+
+def test_get_query_saved_data_response_returns_string():
+    result = get_query_saved_data_response(
+        "vilken tid ska du påminna mig om att handla mat",
+        db_path=_db_path(),
+    )
+    assert isinstance(result, str)
+    assert len(result) > 0
 
 
 # ---------------------------------------------------------------------------

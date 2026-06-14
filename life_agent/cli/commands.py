@@ -391,6 +391,7 @@ def register_commands(app: typer.Typer) -> None:
             ChatIntent,
             classify_intent,
             get_deadlines_response,
+            get_query_saved_data_response,
             get_reminders_response,
             get_today_response,
             get_week_response,
@@ -442,6 +443,10 @@ def register_commands(app: typer.Typer) -> None:
 
             if intent == ChatIntent.REMINDERS:
                 console.print(get_reminders_response())
+                continue
+
+            if intent == ChatIntent.QUERY_SAVED_DATA:
+                console.print(get_query_saved_data_response(stripped))
                 continue
 
             if intent == ChatIntent.ADD_ITEMS:

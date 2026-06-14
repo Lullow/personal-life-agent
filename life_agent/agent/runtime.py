@@ -74,6 +74,12 @@ class AgentRuntime:
             text = self._dispatch_read(tool)
             return RuntimeResponse(kind="display", text=text, decision=decision)
 
+        if tool == "query_saved_data":
+            from life_agent.services.saved_data_query_service import answer_saved_data_question
+
+            text = answer_saved_data_question(message, db_path=self._db_path)
+            return RuntimeResponse(kind="display", text=text, decision=decision)
+
         if tool == "extract_items":
             return RuntimeResponse(
                 kind="needs_confirmation",

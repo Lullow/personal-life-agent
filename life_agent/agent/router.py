@@ -79,6 +79,25 @@ _REMINDER_PATTERNS = [
     )
 ]
 
+# Query patterns — checked BEFORE planning markers so that "handla" in a
+# question phrase doesn't accidentally trigger extraction.
+_QUERY_PATTERNS = [
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"\bvilken\s+tid\b",
+        r"\bnär\s+ska\s+du\s+påminna\b",
+        r"\bnär\s+påminner\b",
+        r"\bpåminnelse\s+om\b",
+        r"\bpåminna\s+mig\s+om\b",
+        r"\bhar\s+jag\s+något\s+planerat\s+imorgon\b",
+        r"\bvad\s+händer\s+imorgon\b",
+        r"\bvad\s+har\s+jag\s+imorgon\b",
+        r"\bvad\s+har\s+jag\s+för\s+träning",
+        r"\bträningar?\s+den\s+här\s+veckan\b",
+        r"\bträningar?\s+i\s+veckan\b",
+    )
+]
+
 _PLANNING_MARKERS = [
     re.compile(p, re.IGNORECASE)
     for p in (
@@ -253,6 +272,18 @@ class AgentRouter:
             return self._unknown(stripped)
 
         lower = stripped.lower()
+
+        # Query patterns are checked first: they are specific question forms
+        # that would otherwise be caught by the broader week/planning patterns.
+        if any(p.search(lower) for p in _QUERY_PATTERNS):
+            return AgentDecision(
+                intent="query_saved_data",
+                tool_name="query_saved_data",
+                action_type="read",
+                requires_confirmation=False,
+                arguments={"text": stripped},
+                confidence=1.0,
+            )
 
         for patterns, tool, intent_label in (
             (_TODAY_PATTERNS, "list_today", "show_today"),

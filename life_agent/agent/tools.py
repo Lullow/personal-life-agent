@@ -108,6 +108,13 @@ _DEFAULT_TOOLS: list[ToolDefinition] = [
         requires_confirmation=False,
         handler_name="ask_clarification",
     ),
+    ToolDefinition(
+        name="query_saved_data",
+        description="Answer read-only questions about saved reminders, tasks, events, and activities",
+        action_type="read",
+        requires_confirmation=False,
+        handler_name="answer_saved_data_question",
+    ),
 ]
 
 

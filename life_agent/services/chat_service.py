@@ -28,6 +28,7 @@ class ChatIntent(StrEnum):
     REMINDERS = "reminders"
     ADD_ITEMS = "add_items"
     COMPLETE = "complete"
+    QUERY_SAVED_DATA = "query_saved_data"
     UNKNOWN = "unknown"
 
 
@@ -38,6 +39,7 @@ _TOOL_TO_INTENT: dict[str | None, ChatIntent] = {
     "list_reminders": ChatIntent.REMINDERS,
     "extract_items": ChatIntent.ADD_ITEMS,
     "complete_activity": ChatIntent.COMPLETE,
+    "query_saved_data": ChatIntent.QUERY_SAVED_DATA,
 }
 
 _default_router = AgentRouter()
@@ -132,3 +134,9 @@ def get_reminders_response(db_path: str | None = None) -> str:
     if not pending:
         return "No pending reminders."
     return "\n".join(format_reminder_line(r) for r in pending)
+
+
+def get_query_saved_data_response(text: str, db_path: str | None = None) -> str:
+    from life_agent.services.saved_data_query_service import answer_saved_data_question
+
+    return answer_saved_data_question(text, db_path=db_path)

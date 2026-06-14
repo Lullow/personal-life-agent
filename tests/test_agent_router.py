@@ -139,3 +139,33 @@ class TestRouterProperties:
     def test_returns_agent_decision(self, router: AgentRouter):
         d = router.route("vad har jag idag")
         assert isinstance(d, AgentDecision)
+
+
+class TestQuerySavedDataRouting:
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "vilken tid ska du påminna mig om att handla mat",
+            "när ska du påminna mig om träningen",
+            "har jag något planerat imorgon",
+            "vad har jag för träningar den här veckan",
+            "träningar i veckan",
+        ],
+    )
+    def test_routes_to_query_saved_data(self, router: AgentRouter, text: str):
+        d = router.route(text)
+        assert d.tool_name == "query_saved_data"
+        assert d.action_type == "read"
+        assert d.requires_confirmation is False
+
+    def test_query_does_not_require_confirmation(self, router: AgentRouter):
+        d = router.route("vilken tid ska du påminna mig om att handla mat")
+        assert d.requires_confirmation is False
+
+    def test_planning_still_routes_to_extract(self, router: AgentRouter):
+        d = router.route("jag ska träna rygg och biceps kl 12 imorgon")
+        assert d.tool_name == "extract_items"
+
+    def test_completion_still_routes_to_complete(self, router: AgentRouter):
+        d = router.route("jag har tränat klart")
+        assert d.tool_name == "complete_activity"

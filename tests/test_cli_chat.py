@@ -175,6 +175,48 @@ def test_chat_complete_no_planned_activity():
 
 
 # ---------------------------------------------------------------------------
+# Saved-data Q&A (query_saved_data) — no confirmation required
+# ---------------------------------------------------------------------------
+
+
+def test_chat_query_reminder_phrase_no_crash():
+    """Question about reminder time must not produce the unknown fallback."""
+    output = _chat("vilken tid ska du påminna mig om att handla mat\n")
+    assert "not sure what to do" not in output.lower()
+
+
+def test_chat_query_planned_tomorrow_phrase_no_crash():
+    """Question about tomorrow's plans must not produce the unknown fallback."""
+    output = _chat("har jag något planerat imorgon\n")
+    assert "not sure what to do" not in output.lower()
+
+
+def test_chat_query_training_week_phrase_no_crash():
+    """Question about training this week must not produce the unknown fallback."""
+    output = _chat("vad har jag för träningar den här veckan\n")
+    assert "not sure what to do" not in output.lower()
+
+
+def test_chat_query_saved_data_never_asks_confirmation():
+    """query_saved_data responses must not contain a confirmation prompt."""
+    output = _chat("vilken tid ska du påminna mig om att handla mat\n")
+    assert "Save this?" not in output
+    assert "Mark this activity" not in output
+
+
+def _seed_reminder(title: str, remind_at: str) -> None:
+    """Insert a reminder via the CLI add command."""
+    runner.invoke(app, ["add", "--yes", f"Påminn mig att {title} imorgon kl 10"])
+
+
+def test_chat_query_reminder_with_matching_data():
+    """After saving a reminder the chat query should mention the reminder."""
+    runner.invoke(app, ["reminder", "--yes", "handla mat", "--remind-at", "2026-06-15 10:00"])
+    output = _chat("vilken tid ska du påminna mig om att handla mat\n")
+    assert "handla mat" in output.lower() or "10:00" in output or "reminder" in output.lower()
+
+
+# ---------------------------------------------------------------------------
 # Unknown input
 # ---------------------------------------------------------------------------
 
