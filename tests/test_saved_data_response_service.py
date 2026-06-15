@@ -524,6 +524,136 @@ class TestFormatNextUpcoming:
         assert "No upcoming" in text
 
 
+class TestFormatDailyFocus:
+    def test_matched_with_event_and_task(self):
+        result = SavedDataQueryResult(
+            query_type=QueryType.DAILY_FOCUS,
+            question="dagens fokus",
+            matched=True,
+            records=[
+                SavedDataRecord(
+                    record_type="event",
+                    title="Meeting",
+                    when="2026-06-15 14:00",
+                    details="scheduled today",
+                ),
+                SavedDataRecord(
+                    record_type="task",
+                    title="Study ML",
+                    when="2026-06-15",
+                    status="pending",
+                    details="due today",
+                ),
+            ],
+        )
+        text = format_saved_data_query_result(result)
+        assert "Today's focus:" in text
+        assert "Meeting" in text
+        assert "Study ML" in text
+        assert "due today" in text
+
+    def test_matched_single_item(self):
+        result = SavedDataQueryResult(
+            query_type=QueryType.DAILY_FOCUS,
+            question="dagens fokus",
+            matched=True,
+            records=[
+                SavedDataRecord(
+                    record_type="reminder",
+                    title="Call doctor",
+                    when="2026-06-15 09:00",
+                    details="scheduled today",
+                ),
+            ],
+        )
+        text = format_saved_data_query_result(result)
+        assert "Today's focus:" in text
+        assert "Call doctor" in text
+
+    def test_no_result_fallback(self):
+        result = SavedDataQueryResult(
+            query_type=QueryType.DAILY_FOCUS,
+            question="dagens fokus",
+            matched=False,
+            records=[],
+            fallback_message="No saved focus items found for today (2026-06-15).",
+        )
+        text = format_saved_data_query_result(result)
+        assert "No saved focus items" in text
+
+    def test_no_result_default_fallback(self):
+        result = SavedDataQueryResult(
+            query_type=QueryType.DAILY_FOCUS,
+            question="dagens fokus",
+            matched=False,
+            records=[],
+        )
+        text = format_saved_data_query_result(result)
+        assert "No saved focus items" in text
+
+    def test_undated_task_without_when(self):
+        result = SavedDataQueryResult(
+            query_type=QueryType.DAILY_FOCUS,
+            question="dagens fokus",
+            matched=True,
+            records=[
+                SavedDataRecord(
+                    record_type="task",
+                    title="Clean house",
+                    status="pending",
+                    details="pending",
+                ),
+            ],
+        )
+        text = format_saved_data_query_result(result)
+        assert "Today's focus:" in text
+        assert "Clean house" in text
+
+    def test_numbered_items(self):
+        result = SavedDataQueryResult(
+            query_type=QueryType.DAILY_FOCUS,
+            question="dagens fokus",
+            matched=True,
+            records=[
+                SavedDataRecord(record_type="event", title="A", when="2026-06-15 10:00"),
+                SavedDataRecord(record_type="task", title="B", when="2026-06-15"),
+            ],
+        )
+        text = format_saved_data_query_result(result)
+        assert "1." in text
+        assert "2." in text
+
+
+class TestBuildDailyFocusAnswer:
+    def test_matched_is_grounded(self):
+        result = SavedDataQueryResult(
+            query_type=QueryType.DAILY_FOCUS,
+            question="test",
+            matched=True,
+            records=[
+                SavedDataRecord(record_type="event", title="Meeting", when="2026-06-15 14:00"),
+            ],
+        )
+        answer = build_saved_data_answer(result)
+        assert answer.grounded is True
+        assert answer.matched is True
+        assert answer.record_count == 1
+        assert "event" in answer.source_record_types
+
+    def test_no_result_is_not_grounded(self):
+        result = SavedDataQueryResult(
+            query_type=QueryType.DAILY_FOCUS,
+            question="test",
+            matched=False,
+            records=[],
+            fallback_message="No saved focus items found for today.",
+        )
+        answer = build_saved_data_answer(result)
+        assert answer.grounded is False
+        assert answer.matched is False
+        assert answer.record_count == 0
+
+
 class TestFormatUnknown:
     def test_uses_fallback_message(self):
         result = SavedDataQueryResult(

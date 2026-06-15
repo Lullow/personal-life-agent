@@ -179,6 +179,8 @@ def _format_query_result(result: SavedDataQueryResult) -> str:
         return _format_training_week(result)
     if result.query_type == QueryType.NEXT_UPCOMING:
         return _format_next_upcoming(result)
+    if result.query_type == QueryType.DAILY_FOCUS:
+        return _format_daily_focus(result)
     return result.fallback_message or "I couldn't find a specific answer for that yet."
 
 
@@ -247,3 +249,19 @@ def _format_next_upcoming(result: SavedDataQueryResult) -> str:
         for r in result.records
     ]
     return "Your next saved items:\n" + "\n".join(lines)
+
+
+def _format_daily_focus(result: SavedDataQueryResult) -> str:
+    if not result.matched:
+        return result.fallback_message or "No saved focus items found for today."
+
+    lines: list[str] = []
+    for idx, r in enumerate(result.records, start=1):
+        label = r.record_type.capitalize()
+        suffix = f" — {r.details}" if r.details else ""
+        if r.when:
+            lines.append(f"  {idx}. {label}: {r.title} at {r.when}{suffix}")
+        else:
+            lines.append(f"  {idx}. {label}: {r.title}{suffix}")
+
+    return "Today's focus:\n" + "\n".join(lines)

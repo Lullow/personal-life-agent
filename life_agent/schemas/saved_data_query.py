@@ -14,6 +14,7 @@ class QueryType(StrEnum):
     PLANNED_TOMORROW = "planned_tomorrow"
     TRAINING_WEEK = "training_week"
     NEXT_UPCOMING = "next_upcoming"
+    DAILY_FOCUS = "daily_focus"
     UNKNOWN = "unknown"
 
 

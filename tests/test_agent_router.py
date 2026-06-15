@@ -191,3 +191,25 @@ class TestNextUpcomingRouting:
     def test_does_not_route_to_extract(self, router: AgentRouter):
         d = router.route("vad händer härnäst")
         assert d.tool_name != "extract_items"
+
+
+class TestDailyFocusRouting:
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "vad borde jag fokusera på idag",
+            "vad är viktigast idag",
+            "vad ska jag prioritera idag",
+            "dagens fokus",
+            "vad är min viktigaste grej idag",
+        ],
+    )
+    def test_routes_to_query_saved_data(self, router: AgentRouter, text: str):
+        d = router.route(text)
+        assert d.tool_name == "query_saved_data"
+        assert d.action_type == "read"
+        assert d.requires_confirmation is False
+
+    def test_does_not_route_to_extract(self, router: AgentRouter):
+        d = router.route("vad borde jag fokusera på idag")
+        assert d.tool_name != "extract_items"

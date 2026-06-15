@@ -106,6 +106,13 @@ _QUERY_PATTERNS = [
         r"\bvad\s+är\s+min\s+nästa\b",
         r"\bhärnäst\b",
         r"\bnärmast\b",
+        r"\bfokusera\s+på\s+idag\b",
+        r"\bviktigast\s+idag\b",
+        r"\bprioritera\s+idag\b",
+        r"\bdagens\s+fokus\b",
+        r"\bmin\s+viktigaste\b.*\bidag\b",
+        r"\bvad\s+borde\s+jag\b.*\bidag\b",
+        r"\bvad\s+ska\s+jag\s+fokusera\b",
     )
 ]
 

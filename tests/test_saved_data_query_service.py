@@ -302,6 +302,113 @@ class TestStructuredNextUpcoming:
 
 
 # ---------------------------------------------------------------------------
+# Structured: Daily focus
+# ---------------------------------------------------------------------------
+
+
+def _seed_event(title: str, start: datetime) -> None:
+    runner.invoke(
+        app,
+        ["add-event", title, "--start", start.strftime("%Y-%m-%d %H:%M")],
+    )
+
+
+def _seed_task(title: str, due: date | None = None) -> None:
+    args = ["add-task", title]
+    if due is not None:
+        args += ["--due", str(due)]
+    runner.invoke(app, args)
+
+
+class TestStructuredDailyFocus:
+    def test_query_type_is_daily_focus(self):
+        result = query_saved_data(
+            "vad borde jag fokusera på idag", db_path=_db(), today=date(2026, 6, 15)
+        )
+        assert result.query_type == QueryType.DAILY_FOCUS
+
+    def test_matched_false_when_nothing_today(self):
+        result = query_saved_data(
+            "dagens fokus", db_path=_db(), today=date(2099, 1, 1)
+        )
+        assert result.matched is False
+        assert result.records == []
+        assert result.fallback_message is not None
+
+    def test_matched_true_with_event_today(self):
+        today = date(2026, 6, 15)
+        _seed_event("Meeting", datetime(2026, 6, 15, 14, 0))
+        result = query_saved_data(
+            "vad är viktigast idag", db_path=_db(), today=today
+        )
+        assert result.matched is True
+        assert any(r.record_type == "event" and "Meeting" in r.title for r in result.records)
+
+    def test_matched_true_with_task_due_today(self):
+        today = date(2026, 6, 15)
+        _seed_task("Study ML", due=today)
+        result = query_saved_data(
+            "dagens fokus", db_path=_db(), today=today
+        )
+        assert result.matched is True
+        assert any(r.record_type == "task" and "Study ML" in r.title for r in result.records)
+
+    def test_matched_true_with_reminder_today(self):
+        today = date(2026, 6, 15)
+        _seed_reminder("Call doctor", datetime(2026, 6, 15, 9, 0))
+        result = query_saved_data(
+            "vad ska jag prioritera idag", db_path=_db(), today=today
+        )
+        assert result.matched is True
+        assert any(r.record_type == "reminder" for r in result.records)
+
+    def test_includes_records_with_details(self):
+        today = date(2026, 6, 15)
+        _seed_event("Meeting", datetime(2026, 6, 15, 14, 0))
+        result = query_saved_data(
+            "dagens fokus", db_path=_db(), today=today
+        )
+        assert result.records[0].details is not None
+
+    def test_events_appear_before_tasks(self):
+        today = date(2026, 6, 15)
+        _seed_task("Study ML", due=today)
+        _seed_event("Meeting", datetime(2026, 6, 15, 14, 0))
+        result = query_saved_data(
+            "dagens fokus", db_path=_db(), today=today
+        )
+        types = [r.record_type for r in result.records]
+        assert types.index("event") < types.index("task")
+
+    def test_undated_tasks_included_when_no_dated_tasks(self):
+        _seed_task("Clean house")
+        result = query_saved_data(
+            "dagens fokus", db_path=_db(), today=date(2099, 1, 1)
+        )
+        assert result.matched is True
+        assert any(r.record_type == "task" and "Clean house" in r.title for r in result.records)
+
+    def test_undated_tasks_excluded_when_dated_tasks_exist(self):
+        today = date(2026, 6, 15)
+        _seed_task("Dated task", due=today)
+        _seed_task("Undated task")
+        result = query_saved_data(
+            "dagens fokus", db_path=_db(), today=today
+        )
+        titles = [r.title for r in result.records]
+        assert "Dated task" in titles
+        assert "Undated task" not in titles
+
+    def test_detects_fokusera_phrase(self):
+        result = query_saved_data("vad ska jag fokusera på", db_path=_db())
+        assert result.query_type == QueryType.DAILY_FOCUS
+
+    def test_detects_viktigast_idag(self):
+        result = query_saved_data("vad är viktigast idag", db_path=_db())
+        assert result.query_type == QueryType.DAILY_FOCUS
+
+
+# ---------------------------------------------------------------------------
 # Existing string API: answer_saved_data_question (backward compat)
 # ---------------------------------------------------------------------------
 

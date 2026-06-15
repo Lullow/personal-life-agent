@@ -17,6 +17,9 @@ Four categories are supported:
 
 4. **Next upcoming** — "vad är nästa grej" / "vad händer härnäst"
    Finds the single earliest future saved item across all data sources.
+
+5. **Daily focus** — "vad borde jag fokusera på idag" / "dagens fokus"
+   Prioritised list of today's events, tasks, reminders, and activities.
 """
 
 from __future__ import annotations
@@ -71,6 +74,9 @@ def query_saved_data(
 
     if _is_next_upcoming_question(msg):
         return _query_next_upcoming(msg, _today, db_path=db_path)
+
+    if _is_daily_focus_question(msg):
+        return _query_daily_focus(msg, _today, db_path=db_path)
 
     return SavedDataQueryResult(
         query_type=QueryType.UNKNOWN,
@@ -148,8 +154,26 @@ def _is_training_week_question(msg: str) -> bool:
     return any(p.search(msg) for p in _TRAINING_WEEK_PATTERNS)
 
 
+_DAILY_FOCUS_PATTERNS = [
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"\bfokusera\s+på\s+idag\b",
+        r"\bviktigast\s+idag\b",
+        r"\bprioritera\s+idag\b",
+        r"\bdagens\s+fokus\b",
+        r"\bmin\s+viktigaste\b.*\bidag\b",
+        r"\bvad\s+borde\s+jag\b.*\bidag\b",
+        r"\bvad\s+ska\s+jag\s+fokusera\b",
+    )
+]
+
+
 def _is_next_upcoming_question(msg: str) -> bool:
     return any(p.search(msg) for p in _NEXT_UPCOMING_PATTERNS)
+
+
+def _is_daily_focus_question(msg: str) -> bool:
+    return any(p.search(msg) for p in _DAILY_FOCUS_PATTERNS)
 
 
 # ---------------------------------------------------------------------------
@@ -391,6 +415,90 @@ def _query_next_upcoming(
         question=msg,
         matched=True,
         records=records,
+    )
+
+
+_MAX_UNDATED_TASKS = 3
+
+
+def _query_daily_focus(
+    msg: str, today: date, *, db_path: str | None
+) -> SavedDataQueryResult:
+    """Collect today's focus items in priority order."""
+    records: list[SavedDataRecord] = []
+
+    from life_agent.db.repositories import (
+        list_activities,
+        list_events,
+        list_reminders,
+        list_tasks,
+    )
+    from life_agent.models.common import ActivityStatus, ReminderStatus, TaskStatus
+
+    for event in list_events(db_path=db_path):
+        if event.start_time and event.start_time.date() == today:
+            records.append(SavedDataRecord(
+                record_type="event",
+                title=event.title,
+                when=_fmt_dt(event.start_time),
+                details="scheduled today",
+            ))
+
+    dated_task_count = 0
+    for task in list_tasks(db_path=db_path):
+        if task.status != TaskStatus.DONE and task.due_date == today:
+            records.append(SavedDataRecord(
+                record_type="task",
+                title=task.title,
+                when=str(today),
+                status=task.status,
+                details="due today",
+            ))
+            dated_task_count += 1
+
+    for rem in list_reminders(status=ReminderStatus.PENDING, db_path=db_path):
+        if rem.remind_at and rem.remind_at.date() == today:
+            records.append(SavedDataRecord(
+                record_type="reminder",
+                title=rem.title or "(untitled)",
+                when=_fmt_dt(rem.remind_at),
+                status="pending",
+                details="scheduled today",
+            ))
+
+    for act in list_activities(db_path=db_path):
+        if (
+            act.status == ActivityStatus.PLANNED
+            and act.logged_at
+            and act.logged_at.date() == today
+        ):
+            records.append(SavedDataRecord(
+                record_type="activity",
+                title=act.title,
+                when=_fmt_dt(act.logged_at),
+                status="planned",
+                details="scheduled today",
+            ))
+
+    if dated_task_count == 0:
+        undated = [
+            t for t in list_tasks(db_path=db_path)
+            if t.status != TaskStatus.DONE and t.due_date is None
+        ]
+        for task in undated[:_MAX_UNDATED_TASKS]:
+            records.append(SavedDataRecord(
+                record_type="task",
+                title=task.title,
+                status=task.status,
+                details="pending",
+            ))
+
+    return SavedDataQueryResult(
+        query_type=QueryType.DAILY_FOCUS,
+        question=msg,
+        matched=len(records) > 0,
+        records=records,
+        fallback_message=None if records else f"No saved focus items found for today ({today}).",
     )
 
 
