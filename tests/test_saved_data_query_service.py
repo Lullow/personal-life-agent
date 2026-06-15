@@ -10,8 +10,10 @@ from life_agent.main import app
 from life_agent.schemas.saved_data_query import QueryType, SavedDataQueryResult, SavedDataRecord
 from life_agent.services.saved_data_query_service import (
     answer_saved_data_question,
-    format_saved_data_query_result,
     query_saved_data,
+)
+from life_agent.services.saved_data_response_service import (
+    format_saved_data_query_result,
 )
 
 runner = CliRunner()
