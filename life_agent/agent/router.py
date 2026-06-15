@@ -95,6 +95,17 @@ _QUERY_PATTERNS = [
         r"\bvad\s+har\s+jag\s+för\s+träning",
         r"\bträningar?\s+den\s+här\s+veckan\b",
         r"\bträningar?\s+i\s+veckan\b",
+        r"\bnästa\s+grej\b",
+        r"\bnästa\s+påminnelse\b",
+        r"\bnästa\s+händelse\b",
+        r"\bnästa\s+uppgift\b",
+        r"\bnästa\s+aktivitet\b",
+        r"\bvad\s+är\s+nästa\b",
+        r"\bvad\s+händer\s+härnäst\b",
+        r"\bvad\s+har\s+jag\s+närmast\b",
+        r"\bvad\s+är\s+min\s+nästa\b",
+        r"\bhärnäst\b",
+        r"\bnärmast\b",
     )
 ]
 

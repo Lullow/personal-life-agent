@@ -241,6 +241,67 @@ class TestFormatResult:
 
 
 # ---------------------------------------------------------------------------
+# Structured: Next upcoming
+# ---------------------------------------------------------------------------
+
+
+class TestStructuredNextUpcoming:
+    def test_query_type_is_next_upcoming(self):
+        result = query_saved_data("vad är nästa grej", db_path=_db())
+        assert result.query_type == QueryType.NEXT_UPCOMING
+
+    def test_matched_false_when_nothing_upcoming(self):
+        result = query_saved_data("vad händer härnäst", db_path=_db())
+        assert result.matched is False
+        assert result.records == []
+        assert result.fallback_message is not None
+
+    def test_matched_true_with_future_reminder(self):
+        _seed_reminder("Handla mat", datetime(2099, 1, 15, 10, 0))
+        result = query_saved_data(
+            "vad är nästa grej", db_path=_db(), today=date(2099, 1, 14)
+        )
+        assert result.matched is True
+        assert len(result.records) >= 1
+        assert result.records[0].record_type == "reminder"
+        assert "Handla mat" in result.records[0].title
+
+    def test_chooses_earliest_item(self):
+        _seed_reminder("Later", datetime(2099, 3, 1, 12, 0))
+        _seed_reminder("Sooner", datetime(2099, 2, 1, 8, 0))
+        result = query_saved_data(
+            "vad händer härnäst", db_path=_db(), today=date(2099, 1, 1)
+        )
+        assert result.matched is True
+        assert len(result.records) == 1
+        assert "Sooner" in result.records[0].title
+
+    def test_ignores_past_items(self):
+        _seed_reminder("Old", datetime(2020, 1, 1, 10, 0))
+        result = query_saved_data(
+            "vad är nästa grej", db_path=_db(), today=date(2026, 6, 15)
+        )
+        assert result.matched is False
+
+    def test_returns_all_earliest_ties(self):
+        _seed_reminder("A", datetime(2099, 2, 1, 10, 0))
+        _seed_reminder("B", datetime(2099, 2, 1, 10, 0))
+        result = query_saved_data(
+            "nästa påminnelse", db_path=_db(), today=date(2099, 1, 1)
+        )
+        assert result.matched is True
+        assert len(result.records) == 2
+
+    def test_detects_nasta_paminnelse(self):
+        result = query_saved_data("nästa påminnelse", db_path=_db())
+        assert result.query_type == QueryType.NEXT_UPCOMING
+
+    def test_detects_vad_har_jag_narmast(self):
+        result = query_saved_data("vad har jag närmast", db_path=_db())
+        assert result.query_type == QueryType.NEXT_UPCOMING
+
+
+# ---------------------------------------------------------------------------
 # Existing string API: answer_saved_data_question (backward compat)
 # ---------------------------------------------------------------------------
 

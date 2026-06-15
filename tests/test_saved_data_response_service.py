@@ -181,6 +181,34 @@ class TestBuildSavedDataAnswer:
         assert answer.matched is False
         assert answer.record_count == 1
 
+    def test_next_upcoming_matched_is_grounded(self):
+        result = SavedDataQueryResult(
+            query_type=QueryType.NEXT_UPCOMING,
+            question="test",
+            matched=True,
+            records=[
+                SavedDataRecord(record_type="reminder", title="Handla mat", when="2026-06-16 10:00"),
+            ],
+        )
+        answer = build_saved_data_answer(result)
+        assert answer.grounded is True
+        assert answer.matched is True
+        assert answer.record_count == 1
+        assert "reminder" in answer.source_record_types
+
+    def test_next_upcoming_no_result_is_not_grounded(self):
+        result = SavedDataQueryResult(
+            query_type=QueryType.NEXT_UPCOMING,
+            question="test",
+            matched=False,
+            records=[],
+            fallback_message="No upcoming saved items found.",
+        )
+        answer = build_saved_data_answer(result)
+        assert answer.grounded is False
+        assert answer.matched is False
+        assert answer.record_count == 0
+
     def test_query_type_is_string_value(self):
         result = SavedDataQueryResult(
             query_type=QueryType.PLANNED_TOMORROW,
@@ -438,6 +466,62 @@ class TestFormatTrainingWeek:
         assert "Training this week" in text
         assert "Gym session" in text
         assert "2026-06-12" in text
+
+
+class TestFormatNextUpcoming:
+    def test_matched_single_item(self):
+        result = SavedDataQueryResult(
+            query_type=QueryType.NEXT_UPCOMING,
+            question="vad är nästa grej",
+            matched=True,
+            records=[
+                SavedDataRecord(
+                    record_type="reminder",
+                    title="Handla mat",
+                    when="2026-06-16 10:00",
+                    status="pending",
+                )
+            ],
+        )
+        text = format_saved_data_query_result(result)
+        assert "Handla mat" in text
+        assert "Reminder" in text
+        assert "2026-06-16 10:00" in text
+
+    def test_matched_multiple_ties(self):
+        result = SavedDataQueryResult(
+            query_type=QueryType.NEXT_UPCOMING,
+            question="vad händer härnäst",
+            matched=True,
+            records=[
+                SavedDataRecord(record_type="reminder", title="A", when="2026-06-16 10:00"),
+                SavedDataRecord(record_type="event", title="B", when="2026-06-16 10:00"),
+            ],
+        )
+        text = format_saved_data_query_result(result)
+        assert "A" in text
+        assert "B" in text
+
+    def test_no_result_fallback(self):
+        result = SavedDataQueryResult(
+            query_type=QueryType.NEXT_UPCOMING,
+            question="vad är nästa grej",
+            matched=False,
+            records=[],
+            fallback_message="No upcoming saved items found.",
+        )
+        text = format_saved_data_query_result(result)
+        assert "No upcoming" in text
+
+    def test_no_result_default_fallback(self):
+        result = SavedDataQueryResult(
+            query_type=QueryType.NEXT_UPCOMING,
+            question="vad är nästa grej",
+            matched=False,
+            records=[],
+        )
+        text = format_saved_data_query_result(result)
+        assert "No upcoming" in text
 
 
 class TestFormatUnknown:

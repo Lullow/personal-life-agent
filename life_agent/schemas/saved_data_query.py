@@ -13,6 +13,7 @@ class QueryType(StrEnum):
     REMINDER_LOOKUP = "reminder_lookup"
     PLANNED_TOMORROW = "planned_tomorrow"
     TRAINING_WEEK = "training_week"
+    NEXT_UPCOMING = "next_upcoming"
     UNKNOWN = "unknown"
 
 

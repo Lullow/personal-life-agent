@@ -177,6 +177,8 @@ def _format_query_result(result: SavedDataQueryResult) -> str:
         return _format_tomorrow(result)
     if result.query_type == QueryType.TRAINING_WEEK:
         return _format_training_week(result)
+    if result.query_type == QueryType.NEXT_UPCOMING:
+        return _format_next_upcoming(result)
     return result.fallback_message or "I couldn't find a specific answer for that yet."
 
 
@@ -229,3 +231,19 @@ def _format_training_week(result: SavedDataQueryResult) -> str:
 
     lines = [f"  • {r.title} on {r.when}" for r in result.records]
     return header + "\n" + "\n".join(lines)
+
+
+def _format_next_upcoming(result: SavedDataQueryResult) -> str:
+    if not result.matched:
+        return result.fallback_message or "No upcoming saved items found."
+
+    if len(result.records) == 1:
+        r = result.records[0]
+        label = r.record_type.capitalize()
+        return f"Your next saved item is {label}: {r.title} at {r.when}."
+
+    lines = [
+        f"  • {r.record_type.capitalize()}: {r.title} at {r.when}"
+        for r in result.records
+    ]
+    return "Your next saved items:\n" + "\n".join(lines)

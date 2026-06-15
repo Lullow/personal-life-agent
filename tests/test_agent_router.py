@@ -169,3 +169,25 @@ class TestQuerySavedDataRouting:
     def test_completion_still_routes_to_complete(self, router: AgentRouter):
         d = router.route("jag har tränat klart")
         assert d.tool_name == "complete_activity"
+
+
+class TestNextUpcomingRouting:
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "vad är nästa grej",
+            "vad händer härnäst",
+            "vad har jag närmast",
+            "vad är min nästa påminnelse",
+            "nästa påminnelse",
+        ],
+    )
+    def test_routes_to_query_saved_data(self, router: AgentRouter, text: str):
+        d = router.route(text)
+        assert d.tool_name == "query_saved_data"
+        assert d.action_type == "read"
+        assert d.requires_confirmation is False
+
+    def test_does_not_route_to_extract(self, router: AgentRouter):
+        d = router.route("vad händer härnäst")
+        assert d.tool_name != "extract_items"

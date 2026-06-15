@@ -4,7 +4,7 @@ This service never writes to the database.  It queries existing repositories
 and returns either a structured ``SavedDataQueryResult`` or a plain-text
 answer.
 
-Three categories are supported:
+Four categories are supported:
 
 1. **Reminder lookup** — "vilken tid ska du påminna mig om att handla mat"
    Searches pending reminders by keyword and reports the scheduled time.
@@ -14,6 +14,9 @@ Three categories are supported:
 
 3. **Training this week** — "vad har jag för träningar den här veckan"
    Lists gym/sport activities within the current week.
+
+4. **Next upcoming** — "vad är nästa grej" / "vad händer härnäst"
+   Finds the single earliest future saved item across all data sources.
 """
 
 from __future__ import annotations
@@ -66,6 +69,9 @@ def query_saved_data(
     if _is_training_week_question(msg):
         return _query_training_week(msg, _today, db_path=db_path)
 
+    if _is_next_upcoming_question(msg):
+        return _query_next_upcoming(msg, _today, db_path=db_path)
+
     return SavedDataQueryResult(
         query_type=QueryType.UNKNOWN,
         question=msg,
@@ -112,6 +118,24 @@ _TRAINING_WEEK_PATTERNS = [
 ]
 
 
+_NEXT_UPCOMING_PATTERNS = [
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"\bnästa\s+grej\b",
+        r"\bnästa\s+påminnelse\b",
+        r"\bnästa\s+händelse\b",
+        r"\bnästa\s+uppgift\b",
+        r"\bnästa\s+aktivitet\b",
+        r"\bvad\s+är\s+nästa\b",
+        r"\bvad\s+händer\s+härnäst\b",
+        r"\bvad\s+har\s+jag\s+närmast\b",
+        r"\bvad\s+är\s+min\s+nästa\b",
+        r"\bhärnäst\b",
+        r"\bnärmast\b",
+    )
+]
+
+
 def _is_reminder_question(msg: str) -> bool:
     return any(p.search(msg) for p in _REMINDER_Q_PATTERNS)
 
@@ -122,6 +146,10 @@ def _is_tomorrow_question(msg: str) -> bool:
 
 def _is_training_week_question(msg: str) -> bool:
     return any(p.search(msg) for p in _TRAINING_WEEK_PATTERNS)
+
+
+def _is_next_upcoming_question(msg: str) -> bool:
+    return any(p.search(msg) for p in _NEXT_UPCOMING_PATTERNS)
 
 
 # ---------------------------------------------------------------------------
@@ -276,6 +304,93 @@ def _query_training_week(
         matched=len(records) > 0,
         records=records,
         fallback_message=None if records else f"No training activities found this week ({week_start} – {week_end}).",
+    )
+
+
+def _query_next_upcoming(
+    msg: str, today: date, *, db_path: str | None
+) -> SavedDataQueryResult:
+    """Find the single earliest future item across all data sources."""
+    now = datetime.combine(today, datetime.min.time())
+    candidates: list[tuple[datetime, SavedDataRecord]] = []
+
+    from life_agent.db.repositories import (
+        list_activities,
+        list_events,
+        list_reminders,
+        list_tasks,
+    )
+    from life_agent.models.common import ActivityStatus, ReminderStatus, TaskStatus
+
+    for rem in list_reminders(status=ReminderStatus.PENDING, db_path=db_path):
+        if rem.remind_at and rem.remind_at >= now:
+            candidates.append((
+                rem.remind_at,
+                SavedDataRecord(
+                    record_type="reminder",
+                    title=rem.title or "(untitled)",
+                    when=_fmt_dt(rem.remind_at),
+                    status="pending",
+                ),
+            ))
+
+    for event in list_events(db_path=db_path):
+        if event.start_time and event.start_time >= now:
+            candidates.append((
+                event.start_time,
+                SavedDataRecord(
+                    record_type="event",
+                    title=event.title,
+                    when=_fmt_dt(event.start_time),
+                ),
+            ))
+
+    for task in list_tasks(db_path=db_path):
+        if task.status != TaskStatus.DONE and task.due_date and task.due_date >= today:
+            dt = datetime.combine(task.due_date, datetime.min.time())
+            candidates.append((
+                dt,
+                SavedDataRecord(
+                    record_type="task",
+                    title=task.title,
+                    when=str(task.due_date),
+                    status=task.status,
+                ),
+            ))
+
+    for act in list_activities(db_path=db_path):
+        if (
+            act.status == ActivityStatus.PLANNED
+            and act.logged_at
+            and act.logged_at >= now
+        ):
+            candidates.append((
+                act.logged_at,
+                SavedDataRecord(
+                    record_type="activity",
+                    title=act.title,
+                    when=_fmt_dt(act.logged_at),
+                    status="planned",
+                ),
+            ))
+
+    if not candidates:
+        return SavedDataQueryResult(
+            query_type=QueryType.NEXT_UPCOMING,
+            question=msg,
+            matched=False,
+            fallback_message="No upcoming saved items found.",
+        )
+
+    candidates.sort(key=lambda c: c[0])
+    earliest_dt = candidates[0][0]
+    records = [rec for dt, rec in candidates if dt == earliest_dt]
+
+    return SavedDataQueryResult(
+        query_type=QueryType.NEXT_UPCOMING,
+        question=msg,
+        matched=True,
+        records=records,
     )
 
 
