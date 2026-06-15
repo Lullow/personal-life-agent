@@ -1,7 +1,8 @@
 """Read-only service for answering simple questions about saved data.
 
 This service never writes to the database.  It queries existing repositories
-and returns a plain-text answer.
+and returns either a structured ``SavedDataQueryResult`` or a plain-text
+answer.
 
 Three categories are supported:
 
@@ -20,6 +21,17 @@ from __future__ import annotations
 import re
 from datetime import date, datetime, timedelta
 
+from life_agent.schemas.saved_data_query import (
+    QueryType,
+    SavedDataQueryResult,
+    SavedDataRecord,
+)
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
 
 def answer_saved_data_question(
     message: str,
@@ -28,19 +40,46 @@ def answer_saved_data_question(
     today: date | None = None,
 ) -> str:
     """Return a plain-text answer for *message*, or a polite fallback."""
+    result = query_saved_data(message, db_path=db_path, today=today)
+    return format_saved_data_query_result(result)
+
+
+def query_saved_data(
+    message: str,
+    db_path: str | None = None,
+    *,
+    today: date | None = None,
+) -> SavedDataQueryResult:
+    """Classify *message* and return a structured query result."""
     msg = message.strip()
     _today = today or date.today()
 
     if _is_reminder_question(msg):
-        return _answer_reminder_question(msg, db_path=db_path)
+        return _query_reminder(msg, db_path=db_path)
 
     if _is_tomorrow_question(msg):
-        return _answer_tomorrow_question(_today, db_path=db_path)
+        return _query_tomorrow(msg, _today, db_path=db_path)
 
     if _is_training_week_question(msg):
-        return _answer_training_week_question(_today, db_path=db_path)
+        return _query_training_week(msg, _today, db_path=db_path)
 
-    return "I couldn't find a specific answer for that yet."
+    return SavedDataQueryResult(
+        query_type=QueryType.UNKNOWN,
+        question=msg,
+        matched=False,
+        fallback_message="I couldn't find a specific answer for that yet.",
+    )
+
+
+def format_saved_data_query_result(result: SavedDataQueryResult) -> str:
+    """Format a ``SavedDataQueryResult`` into the user-facing text answer."""
+    if result.query_type == QueryType.REMINDER_LOOKUP:
+        return _format_reminder(result)
+    if result.query_type == QueryType.PLANNED_TOMORROW:
+        return _format_tomorrow(result)
+    if result.query_type == QueryType.TRAINING_WEEK:
+        return _format_training_week(result)
+    return result.fallback_message or "I couldn't find a specific answer for that yet."
 
 
 # ---------------------------------------------------------------------------
@@ -94,63 +133,125 @@ def _is_training_week_question(msg: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Answer helpers
+# Structured query helpers
 # ---------------------------------------------------------------------------
 
-def _answer_reminder_question(msg: str, *, db_path: str | None) -> str:
+
+def _query_reminder(msg: str, *, db_path: str | None) -> SavedDataQueryResult:
     from life_agent.db.repositories import list_reminders
     from life_agent.models.common import ReminderStatus
 
     pending = list_reminders(status=ReminderStatus.PENDING, db_path=db_path)
+
     if not pending:
-        return "You have no pending reminders."
+        return SavedDataQueryResult(
+            query_type=QueryType.REMINDER_LOOKUP,
+            question=msg,
+            matched=False,
+            fallback_message="You have no pending reminders.",
+        )
 
     keywords = _extract_keywords(msg)
-
     matches = [
         r for r in pending
         if r.title and any(kw in r.title.lower() for kw in keywords)
     ]
 
     if not matches:
-        lines = [f"  • {r.title} at {_fmt_dt(r.remind_at)}" for r in pending]
-        return "No reminder matched your query. Pending reminders:\n" + "\n".join(lines)
+        records = [
+            SavedDataRecord(
+                record_type="reminder",
+                title=r.title or "(untitled)",
+                when=_fmt_dt(r.remind_at),
+                status="pending",
+            )
+            for r in pending
+        ]
+        return SavedDataQueryResult(
+            query_type=QueryType.REMINDER_LOOKUP,
+            question=msg,
+            matched=False,
+            records=records,
+            fallback_message="No reminder matched your query.",
+        )
 
-    parts = []
-    for r in matches:
-        parts.append(f"You have a reminder for {r.title} at {_fmt_dt(r.remind_at)}.")
-    return "\n".join(parts)
+    records = [
+        SavedDataRecord(
+            record_type="reminder",
+            title=r.title or "(untitled)",
+            when=_fmt_dt(r.remind_at),
+            status="pending",
+        )
+        for r in matches
+    ]
+    return SavedDataQueryResult(
+        query_type=QueryType.REMINDER_LOOKUP,
+        question=msg,
+        matched=True,
+        records=records,
+    )
 
 
-def _answer_tomorrow_question(today: date, *, db_path: str | None) -> str:
+def _query_tomorrow(
+    msg: str, today: date, *, db_path: str | None
+) -> SavedDataQueryResult:
     tomorrow = today + timedelta(days=1)
-    lines: list[str] = []
+    records: list[SavedDataRecord] = []
 
-    from life_agent.db.repositories import list_activities, list_events, list_reminders, list_tasks
+    from life_agent.db.repositories import (
+        list_activities,
+        list_events,
+        list_reminders,
+        list_tasks,
+    )
     from life_agent.models.common import ReminderStatus, TaskStatus
 
     for event in list_events(db_path=db_path):
         if event.start_time and event.start_time.date() == tomorrow:
-            lines.append(f"  • Event: {event.title} at {_fmt_dt(event.start_time)}")
+            records.append(SavedDataRecord(
+                record_type="event",
+                title=event.title,
+                when=_fmt_dt(event.start_time),
+            ))
 
     for task in list_tasks(db_path=db_path):
         if task.status != TaskStatus.DONE and task.due_date == tomorrow:
-            lines.append(f"  • Task: {task.title} (due {tomorrow})")
+            records.append(SavedDataRecord(
+                record_type="task",
+                title=task.title,
+                when=str(tomorrow),
+                status=task.status,
+            ))
 
     for act in list_activities(db_path=db_path):
         if act.logged_at and act.logged_at.date() == tomorrow:
-            lines.append(f"  • Activity: {act.title}")
+            records.append(SavedDataRecord(
+                record_type="activity",
+                title=act.title,
+                when=_fmt_dt(act.logged_at),
+            ))
 
     for rem in list_reminders(status=ReminderStatus.PENDING, db_path=db_path):
         if rem.remind_at and rem.remind_at.date() == tomorrow:
-            lines.append(f"  • Reminder: {rem.title} at {_fmt_dt(rem.remind_at)}")
+            records.append(SavedDataRecord(
+                record_type="reminder",
+                title=rem.title or "(untitled)",
+                when=_fmt_dt(rem.remind_at),
+                status="pending",
+            ))
 
-    if not lines:
-        return f"Nothing is planned for tomorrow ({tomorrow})."
-    return f"Planned for tomorrow ({tomorrow}):\n" + "\n".join(lines)
+    return SavedDataQueryResult(
+        query_type=QueryType.PLANNED_TOMORROW,
+        question=msg,
+        matched=len(records) > 0,
+        records=records,
+        fallback_message=None if records else f"Nothing is planned for tomorrow ({tomorrow}).",
+    )
 
 
-def _answer_training_week_question(today: date, *, db_path: str | None) -> str:
+def _query_training_week(
+    msg: str, today: date, *, db_path: str | None
+) -> SavedDataQueryResult:
     week_start = today - timedelta(days=today.weekday())
     week_end = week_start + timedelta(days=6)
 
@@ -166,11 +267,82 @@ def _answer_training_week_question(today: date, *, db_path: str | None) -> str:
         and week_start <= a.logged_at.date() <= week_end
     ]
 
-    if not training:
-        return f"No training activities found this week ({week_start} – {week_end})."
+    records = [
+        SavedDataRecord(
+            record_type="activity",
+            title=a.title,
+            when=str(a.logged_at.date()),
+            status=a.status if hasattr(a, "status") else None,
+            details=a.activity_type if isinstance(a.activity_type, str) else a.activity_type.value,
+        )
+        for a in training
+    ]
 
-    lines = [f"  • {a.title} on {a.logged_at.date()}" for a in training]
-    return f"Training this week ({week_start} – {week_end}):\n" + "\n".join(lines)
+    return SavedDataQueryResult(
+        query_type=QueryType.TRAINING_WEEK,
+        question=msg,
+        matched=len(records) > 0,
+        records=records,
+        fallback_message=None if records else f"No training activities found this week ({week_start} – {week_end}).",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Formatters
+# ---------------------------------------------------------------------------
+
+
+def _format_reminder(result: SavedDataQueryResult) -> str:
+    if not result.records and result.fallback_message:
+        return result.fallback_message
+
+    if not result.matched:
+        lines = [f"  • {r.title} at {r.when}" for r in result.records]
+        header = result.fallback_message or "No reminder matched your query."
+        return header + " Pending reminders:\n" + "\n".join(lines)
+
+    parts = [
+        f"You have a reminder for {r.title} at {r.when}."
+        for r in result.records
+    ]
+    return "\n".join(parts)
+
+
+def _format_tomorrow(result: SavedDataQueryResult) -> str:
+    if not result.matched:
+        return result.fallback_message or "Nothing is planned for tomorrow."
+
+    date_str = result.records[0].when or ""
+    date_part = date_str.split(" ")[0] if " " in date_str else date_str
+
+    lines: list[str] = []
+    for r in result.records:
+        label = r.record_type.capitalize()
+        if r.when:
+            lines.append(f"  • {label}: {r.title} at {r.when}")
+        else:
+            lines.append(f"  • {label}: {r.title}")
+
+    return f"Planned for tomorrow ({date_part}):\n" + "\n".join(lines)
+
+
+def _format_training_week(result: SavedDataQueryResult) -> str:
+    if not result.matched:
+        return result.fallback_message or "No training activities found this week."
+
+    dates = [r.when for r in result.records if r.when]
+    if dates:
+        from datetime import date as _date
+
+        parsed = sorted(_date.fromisoformat(d) for d in dates)
+        week_start = parsed[0] - timedelta(days=parsed[0].weekday())
+        week_end = week_start + timedelta(days=6)
+        header = f"Training this week ({week_start} – {week_end}):"
+    else:
+        header = "Training this week:"
+
+    lines = [f"  • {r.title} on {r.when}" for r in result.records]
+    return header + "\n" + "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------

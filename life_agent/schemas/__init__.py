@@ -15,6 +15,11 @@ from life_agent.schemas.planner import (
     TodayAgenda,
     WeekAgenda,
 )
+from life_agent.schemas.saved_data_query import (
+    QueryType,
+    SavedDataQueryResult,
+    SavedDataRecord,
+)
 
 __all__ = [
     "AgendaItem",
@@ -26,6 +31,9 @@ __all__ = [
     "ExtractedReminder",
     "ExtractedTask",
     "ExtractionResult",
+    "QueryType",
+    "SavedDataQueryResult",
+    "SavedDataRecord",
     "TodayAgenda",
     "WeekAgenda",
 ]
