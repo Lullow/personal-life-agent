@@ -2,18 +2,43 @@
 
 This module turns a structured ``SavedDataQueryResult`` into a grounded
 ``SavedDataAnswer`` and then into user-facing plain text.  It has no
-database access and performs no I/O.
+database access and performs no I/O beyond an optional LLM call for
+response wording.
 """
 
 from __future__ import annotations
 
 from datetime import date, timedelta
+from typing import Literal, Protocol
 
 from life_agent.schemas.saved_data_query import (
     QueryType,
     SavedDataAnswer,
     SavedDataQueryResult,
 )
+
+ResponseMode = Literal["template", "llm"]
+
+_RESPONSE_GENERATION_PROMPT = """\
+You are formatting a response to the user from already-grounded data.
+
+Rules:
+- Do NOT add facts, dates, times, titles, records, or statuses that are \
+not present in the provided answer data.
+- Do NOT invent or hallucinate any information.
+- If "grounded" is false, clearly state that no matching saved data was found.
+- Keep the answer concise and natural.
+- Return plain text only. No markdown, no JSON.
+- Preserve all factual details (titles, times, dates) exactly as given.
+"""
+
+
+class ResponseLLMClient(Protocol):
+    """Minimal interface for an LLM client used by the response service."""
+
+    def extract_structured(
+        self, system_prompt: str, user_text: str
+    ) -> dict[str, object] | None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -42,23 +67,105 @@ def build_saved_data_answer(result: SavedDataQueryResult) -> SavedDataAnswer:
     )
 
 
-def format_saved_data_answer(answer: SavedDataAnswer) -> str:
-    """Return the plain-text representation of a ``SavedDataAnswer``."""
+def format_saved_data_answer(
+    answer: SavedDataAnswer,
+    *,
+    mode: ResponseMode | None = None,
+    llm_client: ResponseLLMClient | None = None,
+) -> str:
+    """Return the plain-text representation of a ``SavedDataAnswer``.
+
+    Parameters
+    ----------
+    mode
+        ``"template"`` (default) uses deterministic formatting.
+        ``"llm"`` attempts LLM-based rewording with template fallback.
+        When *None*, the mode is read from application settings.
+    llm_client
+        An object satisfying :class:`ResponseLLMClient`.  Inject a fake
+        in tests.  When *mode* is ``"llm"`` and no client is provided,
+        one is created from application settings.
+    """
+    resolved_mode = mode or _get_config_mode()
+
+    if resolved_mode == "llm":
+        client = llm_client or _get_default_llm_client()
+        if client is not None:
+            generated = _try_llm_format(answer, client)
+            if generated:
+                return generated
+
     return answer.text
 
 
-def format_saved_data_query_result(result: SavedDataQueryResult) -> str:
+def format_saved_data_query_result(
+    result: SavedDataQueryResult,
+    *,
+    mode: ResponseMode | None = None,
+    llm_client: ResponseLLMClient | None = None,
+) -> str:
     """Format a ``SavedDataQueryResult`` into the user-facing text answer.
 
     Backward-compatible entry point that builds the intermediate answer
     object and then formats it.
     """
     answer = build_saved_data_answer(result)
-    return format_saved_data_answer(answer)
+    return format_saved_data_answer(answer, mode=mode, llm_client=llm_client)
 
 
 # ---------------------------------------------------------------------------
-# Per-query-type formatters (internal)
+# LLM response generation (internal)
+# ---------------------------------------------------------------------------
+
+
+def _try_llm_format(
+    answer: SavedDataAnswer, client: ResponseLLMClient
+) -> str | None:
+    """Attempt to generate a response via the LLM.  Returns *None* on failure."""
+    user_text = answer.model_dump_json()
+    try:
+        resp = client.extract_structured(_RESPONSE_GENERATION_PROMPT, user_text)
+    except Exception:
+        return None
+
+    if resp is None:
+        return None
+
+    text = resp.get("text") if isinstance(resp, dict) else None
+    if not isinstance(text, str) or not text.strip():
+        return None
+
+    return text.strip()
+
+
+def _get_config_mode() -> ResponseMode:
+    """Read the response mode from application settings."""
+    try:
+        from life_agent.config import get_settings
+
+        value = get_settings().saved_data_response_mode
+        if value == "llm":
+            return "llm"
+    except Exception:
+        pass
+    return "template"
+
+
+def _get_default_llm_client() -> ResponseLLMClient | None:
+    """Try to create an LLM client from application settings."""
+    try:
+        from life_agent.llm.client import LLMClient
+
+        client = LLMClient.from_settings()
+        if not client.enabled:
+            return None
+        return client  # type: ignore[return-value]
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Per-query-type formatters (internal, deterministic)
 # ---------------------------------------------------------------------------
 
 

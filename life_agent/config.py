@@ -15,6 +15,10 @@ EXTRACTION_MODE_LLM = "llm"
 ROUTER_MODE_DETERMINISTIC = "deterministic"
 ROUTER_MODE_LLM = "llm"
 
+# Saved-data response modes
+RESPONSE_MODE_TEMPLATE = "template"
+RESPONSE_MODE_LLM = "llm"
+
 
 class Settings(BaseModel):
     """Minimal settings for the MVP foundation."""
@@ -33,6 +37,12 @@ class Settings(BaseModel):
     agent_router_mode: str = Field(
         default=ROUTER_MODE_DETERMINISTIC,
         alias="LIFE_AGENT_AGENT_ROUTER_MODE",
+    )
+
+    # Saved-data response mode
+    saved_data_response_mode: str = Field(
+        default=RESPONSE_MODE_TEMPLATE,
+        alias="LIFE_AGENT_SAVED_DATA_RESPONSE_MODE",
     )
 
     # Optional LLM provider (OpenAI-compatible). Unset by default so the app
@@ -56,6 +66,9 @@ class Settings(BaseModel):
             ),
             LIFE_AGENT_AGENT_ROUTER_MODE=os.getenv(
                 "LIFE_AGENT_AGENT_ROUTER_MODE", ROUTER_MODE_DETERMINISTIC
+            ),
+            LIFE_AGENT_SAVED_DATA_RESPONSE_MODE=os.getenv(
+                "LIFE_AGENT_SAVED_DATA_RESPONSE_MODE", RESPONSE_MODE_TEMPLATE
             ),
             LIFE_AGENT_LLM_PROVIDER=os.getenv(
                 "LIFE_AGENT_LLM_PROVIDER", "openai_compatible"

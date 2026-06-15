@@ -3,6 +3,8 @@
 These tests are pure-formatting tests: no database access required.
 """
 
+from __future__ import annotations
+
 from life_agent.schemas.saved_data_query import (
     QueryType,
     SavedDataAnswer,
@@ -17,50 +19,100 @@ from life_agent.services.saved_data_response_service import (
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _reminder_result(matched: bool = True) -> SavedDataQueryResult:
+    if matched:
+        return SavedDataQueryResult(
+            query_type=QueryType.REMINDER_LOOKUP,
+            question="test",
+            matched=True,
+            records=[
+                SavedDataRecord(
+                    record_type="reminder",
+                    title="Handla mat",
+                    when="2026-06-15 10:00",
+                    status="pending",
+                )
+            ],
+        )
+    return SavedDataQueryResult(
+        query_type=QueryType.REMINDER_LOOKUP,
+        question="test",
+        matched=False,
+        records=[],
+        fallback_message="You have no pending reminders.",
+    )
+
+
+def _reminder_answer(grounded: bool = True) -> SavedDataAnswer:
+    if grounded:
+        return SavedDataAnswer(
+            query_type="reminder_lookup",
+            text="You have a reminder for Handla mat at 2026-06-15 10:00.",
+            grounded=True,
+            matched=True,
+            record_count=1,
+            source_record_types=["reminder"],
+        )
+    return SavedDataAnswer(
+        query_type="reminder_lookup",
+        text="You have no pending reminders.",
+        grounded=False,
+        matched=False,
+        record_count=0,
+        source_record_types=[],
+        fallback_message="You have no pending reminders.",
+        limitations=["You have no pending reminders."],
+    )
+
+
+class _FakeLLMClient:
+    """Fake LLM client for testing."""
+
+    def __init__(
+        self,
+        response: dict[str, object] | None = None,
+        *,
+        raise_exc: Exception | None = None,
+    ):
+        self.response = response
+        self.raise_exc = raise_exc
+        self.calls: list[tuple[str, str]] = []
+
+    def extract_structured(
+        self, system_prompt: str, user_text: str
+    ) -> dict[str, object] | None:
+        self.calls.append((system_prompt, user_text))
+        if self.raise_exc is not None:
+            raise self.raise_exc
+        return self.response
+
+
+# ---------------------------------------------------------------------------
 # build_saved_data_answer
 # ---------------------------------------------------------------------------
 
 
 class TestBuildSavedDataAnswer:
     def test_returns_saved_data_answer(self):
-        result = SavedDataQueryResult(
-            query_type=QueryType.REMINDER_LOOKUP,
-            question="test",
-            matched=True,
-            records=[SavedDataRecord(record_type="reminder", title="X", when="2026-06-15 10:00")],
-        )
+        result = _reminder_result(matched=True)
         answer = build_saved_data_answer(result)
         assert isinstance(answer, SavedDataAnswer)
 
     def test_matching_reminder_is_grounded(self):
-        result = SavedDataQueryResult(
-            query_type=QueryType.REMINDER_LOOKUP,
-            question="test",
-            matched=True,
-            records=[SavedDataRecord(record_type="reminder", title="Handla mat", when="2026-06-15 10:00")],
-        )
-        answer = build_saved_data_answer(result)
+        answer = build_saved_data_answer(_reminder_result(matched=True))
         assert answer.grounded is True
         assert answer.matched is True
 
     def test_matching_reminder_record_count(self):
-        result = SavedDataQueryResult(
-            query_type=QueryType.REMINDER_LOOKUP,
-            question="test",
-            matched=True,
-            records=[SavedDataRecord(record_type="reminder", title="A", when="2026-06-15 10:00")],
-        )
-        answer = build_saved_data_answer(result)
+        answer = build_saved_data_answer(_reminder_result(matched=True))
         assert answer.record_count == 1
 
     def test_source_record_types_includes_reminder(self):
-        result = SavedDataQueryResult(
-            query_type=QueryType.REMINDER_LOOKUP,
-            question="test",
-            matched=True,
-            records=[SavedDataRecord(record_type="reminder", title="A", when="2026-06-15 10:00")],
-        )
-        answer = build_saved_data_answer(result)
+        answer = build_saved_data_answer(_reminder_result(matched=True))
         assert "reminder" in answer.source_record_types
 
     def test_multiple_record_types_sorted(self):
@@ -104,41 +156,19 @@ class TestBuildSavedDataAnswer:
         assert answer.matched is False
 
     def test_fallback_message_preserved(self):
-        msg = "You have no pending reminders."
-        result = SavedDataQueryResult(
-            query_type=QueryType.REMINDER_LOOKUP,
-            question="test",
-            matched=False,
-            records=[],
-            fallback_message=msg,
-        )
-        answer = build_saved_data_answer(result)
-        assert answer.fallback_message == msg
+        answer = build_saved_data_answer(_reminder_result(matched=False))
+        assert answer.fallback_message == "You have no pending reminders."
 
     def test_limitations_populated_on_fallback(self):
-        result = SavedDataQueryResult(
-            query_type=QueryType.REMINDER_LOOKUP,
-            question="test",
-            matched=False,
-            records=[],
-            fallback_message="You have no pending reminders.",
-        )
-        answer = build_saved_data_answer(result)
+        answer = build_saved_data_answer(_reminder_result(matched=False))
         assert len(answer.limitations) >= 1
         assert "no pending reminders" in answer.limitations[0].lower()
 
     def test_limitations_empty_when_matched(self):
-        result = SavedDataQueryResult(
-            query_type=QueryType.REMINDER_LOOKUP,
-            question="test",
-            matched=True,
-            records=[SavedDataRecord(record_type="reminder", title="A", when="2026-06-15 10:00")],
-        )
-        answer = build_saved_data_answer(result)
+        answer = build_saved_data_answer(_reminder_result(matched=True))
         assert answer.limitations == []
 
     def test_unmatched_with_records_is_grounded(self):
-        """When records exist (e.g. listing all pending) the answer is still grounded."""
         result = SavedDataQueryResult(
             query_type=QueryType.REMINDER_LOOKUP,
             question="test",
@@ -164,21 +194,13 @@ class TestBuildSavedDataAnswer:
 
 
 # ---------------------------------------------------------------------------
-# format_saved_data_answer
+# format_saved_data_answer — template mode (default)
 # ---------------------------------------------------------------------------
 
 
-class TestFormatSavedDataAnswer:
+class TestFormatSavedDataAnswerTemplate:
     def test_returns_string(self):
-        answer = SavedDataAnswer(
-            query_type="reminder_lookup",
-            text="You have a reminder for Handla mat at 2026-06-15 10:00.",
-            grounded=True,
-            matched=True,
-            record_count=1,
-            source_record_types=["reminder"],
-        )
-        text = format_saved_data_answer(answer)
+        text = format_saved_data_answer(_reminder_answer())
         assert isinstance(text, str)
         assert "Handla mat" in text
 
@@ -191,6 +213,83 @@ class TestFormatSavedDataAnswer:
             record_count=0,
         )
         assert format_saved_data_answer(answer) == answer.text
+
+    def test_default_mode_is_template(self):
+        """Without explicit mode, template output is returned."""
+        answer = _reminder_answer()
+        text = format_saved_data_answer(answer)
+        assert text == answer.text
+
+    def test_template_mode_does_not_call_llm_client(self):
+        client = _FakeLLMClient(response={"text": "LLM says hi"})
+        text = format_saved_data_answer(
+            _reminder_answer(), mode="template", llm_client=client
+        )
+        assert text == _reminder_answer().text
+        assert len(client.calls) == 0
+
+
+# ---------------------------------------------------------------------------
+# format_saved_data_answer — LLM mode
+# ---------------------------------------------------------------------------
+
+
+class TestFormatSavedDataAnswerLLM:
+    def test_llm_mode_calls_client(self):
+        client = _FakeLLMClient(response={"text": "Here's your reminder."})
+        format_saved_data_answer(
+            _reminder_answer(), mode="llm", llm_client=client
+        )
+        assert len(client.calls) == 1
+
+    def test_llm_mode_returns_client_text(self):
+        client = _FakeLLMClient(response={"text": "Your reminder: Handla mat at 10:00."})
+        text = format_saved_data_answer(
+            _reminder_answer(), mode="llm", llm_client=client
+        )
+        assert text == "Your reminder: Handla mat at 10:00."
+
+    def test_llm_mode_falls_back_on_exception(self):
+        client = _FakeLLMClient(raise_exc=RuntimeError("LLM down"))
+        answer = _reminder_answer()
+        text = format_saved_data_answer(answer, mode="llm", llm_client=client)
+        assert text == answer.text
+
+    def test_llm_mode_falls_back_on_none_response(self):
+        client = _FakeLLMClient(response=None)
+        answer = _reminder_answer()
+        text = format_saved_data_answer(answer, mode="llm", llm_client=client)
+        assert text == answer.text
+
+    def test_llm_mode_falls_back_on_empty_text(self):
+        client = _FakeLLMClient(response={"text": ""})
+        answer = _reminder_answer()
+        text = format_saved_data_answer(answer, mode="llm", llm_client=client)
+        assert text == answer.text
+
+    def test_llm_mode_falls_back_on_missing_text_key(self):
+        client = _FakeLLMClient(response={"message": "no text key"})
+        answer = _reminder_answer()
+        text = format_saved_data_answer(answer, mode="llm", llm_client=client)
+        assert text == answer.text
+
+    def test_llm_mode_falls_back_on_whitespace_only(self):
+        client = _FakeLLMClient(response={"text": "   \n  "})
+        answer = _reminder_answer()
+        text = format_saved_data_answer(answer, mode="llm", llm_client=client)
+        assert text == answer.text
+
+    def test_llm_mode_no_client_falls_back(self):
+        """LLM mode without a client provided falls back to template."""
+        answer = _reminder_answer()
+        text = format_saved_data_answer(answer, mode="llm", llm_client=None)
+        assert text == answer.text
+
+    def test_non_grounded_answer_safe_in_llm_mode(self):
+        client = _FakeLLMClient(response={"text": "No data found."})
+        answer = _reminder_answer(grounded=False)
+        text = format_saved_data_answer(answer, mode="llm", llm_client=client)
+        assert text == "No data found."
 
 
 # ---------------------------------------------------------------------------
