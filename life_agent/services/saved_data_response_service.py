@@ -1,7 +1,8 @@
 """Formatting layer for saved-data Q&A results.
 
-This module turns a structured ``SavedDataQueryResult`` into user-facing
-plain text.  It has no database access and performs no I/O.
+This module turns a structured ``SavedDataQueryResult`` into a grounded
+``SavedDataAnswer`` and then into user-facing plain text.  It has no
+database access and performs no I/O.
 """
 
 from __future__ import annotations
@@ -10,12 +11,59 @@ from datetime import date, timedelta
 
 from life_agent.schemas.saved_data_query import (
     QueryType,
+    SavedDataAnswer,
     SavedDataQueryResult,
 )
 
 
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
+def build_saved_data_answer(result: SavedDataQueryResult) -> SavedDataAnswer:
+    """Build a grounded ``SavedDataAnswer`` from a query result."""
+    text = _format_query_result(result)
+    has_records = len(result.records) > 0
+
+    limitations: list[str] = []
+    if not result.matched and result.fallback_message:
+        limitations.append(result.fallback_message)
+
+    return SavedDataAnswer(
+        query_type=result.query_type.value,
+        text=text,
+        grounded=has_records,
+        matched=result.matched,
+        record_count=len(result.records),
+        source_record_types=sorted({r.record_type for r in result.records}),
+        fallback_message=result.fallback_message,
+        limitations=limitations,
+    )
+
+
+def format_saved_data_answer(answer: SavedDataAnswer) -> str:
+    """Return the plain-text representation of a ``SavedDataAnswer``."""
+    return answer.text
+
+
 def format_saved_data_query_result(result: SavedDataQueryResult) -> str:
-    """Format a ``SavedDataQueryResult`` into the user-facing text answer."""
+    """Format a ``SavedDataQueryResult`` into the user-facing text answer.
+
+    Backward-compatible entry point that builds the intermediate answer
+    object and then formats it.
+    """
+    answer = build_saved_data_answer(result)
+    return format_saved_data_answer(answer)
+
+
+# ---------------------------------------------------------------------------
+# Per-query-type formatters (internal)
+# ---------------------------------------------------------------------------
+
+
+def _format_query_result(result: SavedDataQueryResult) -> str:
+    """Dispatch to the appropriate per-type formatter."""
     if result.query_type == QueryType.REMINDER_LOOKUP:
         return _format_reminder(result)
     if result.query_type == QueryType.PLANNED_TOMORROW:
@@ -23,11 +71,6 @@ def format_saved_data_query_result(result: SavedDataQueryResult) -> str:
     if result.query_type == QueryType.TRAINING_WEEK:
         return _format_training_week(result)
     return result.fallback_message or "I couldn't find a specific answer for that yet."
-
-
-# ---------------------------------------------------------------------------
-# Per-query-type formatters
-# ---------------------------------------------------------------------------
 
 
 def _format_reminder(result: SavedDataQueryResult) -> str:

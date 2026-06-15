@@ -17,6 +17,7 @@ from life_agent.schemas.planner import (
 )
 from life_agent.schemas.saved_data_query import (
     QueryType,
+    SavedDataAnswer,
     SavedDataQueryResult,
     SavedDataRecord,
 )
@@ -32,6 +33,7 @@ __all__ = [
     "ExtractedTask",
     "ExtractionResult",
     "QueryType",
+    "SavedDataAnswer",
     "SavedDataQueryResult",
     "SavedDataRecord",
     "TodayAgenda",

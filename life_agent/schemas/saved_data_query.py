@@ -34,3 +34,21 @@ class SavedDataQueryResult(BaseModel):
     matched: bool
     records: list[SavedDataRecord] = []
     fallback_message: str | None = None
+
+
+class SavedDataAnswer(BaseModel):
+    """Grounded answer produced from a ``SavedDataQueryResult``.
+
+    This sits between the raw query result and the final plain-text output,
+    carrying both the formatted text and metadata about how the answer was
+    derived.
+    """
+
+    query_type: str
+    text: str
+    grounded: bool
+    matched: bool
+    record_count: int
+    source_record_types: list[str] = []
+    fallback_message: str | None = None
+    limitations: list[str] = []
