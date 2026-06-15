@@ -22,7 +22,9 @@ Supporting modules sit alongside these layers:
 - **Models** (`life_agent/models/`) — Pydantic domain objects and shared enums.
 - **Schemas** (`life_agent/schemas/`) — structured input/output shapes for
   extraction, planning, and confirmation.
-- **Agent** (`life_agent/agent/`) — LLM prompt text and the safety rule.
+- **Agent** (`life_agent/agent/`) — AgentDecision schema, ToolRegistry,
+  AgentPolicy, AgentRouter, AgentRuntime, LLM prompt text, and the safety rule.
+  See [agent-architecture.md](agent-architecture.md) for a full walkthrough.
 - **LLM** (`life_agent/llm/`) — an optional OpenAI-compatible client (stdlib
   only) and JSON-to-schema parsing.
 
@@ -157,29 +159,42 @@ The `complete` command marks a previously planned activity as done:
   `complete_activity` call it first, so the guarantee cannot be bypassed by
   accident.
 
-## Chat mode
+## Chat mode and agent runtime
 
-`python -m life_agent chat` starts a simple interactive loop. The chat service
-classifies each message into an intent:
+`python -m life_agent chat` starts a simple interactive loop.  Messages flow
+through a structured agent pipeline:
 
-| Intent | Example phrases | Behaviour |
-|--------|----------------|-----------|
+```
+CLI chat loop
+  └─► ChatService.classify_intent()
+        └─► AgentRouter.route()  (deterministic by default, optional LLM)
+              └─► AgentDecision  →  AgentPolicy check
+                    └─► AgentRuntime dispatches to services
+```
+
+The runtime returns one of three response kinds:
+
+- `"display"` — read-only result, printed immediately.
+- `"needs_confirmation"` — the CLI shows a proposal and asks the user before
+  writing anything.
+- `"unknown"` — helpful fallback with examples.
+
+| Chat intent | Example phrases | Behaviour |
+|---|---|---|
 | `/help` | `/help`, `help` | Print available commands |
 | `/quit` | `/quit`, `/exit` | Exit the loop |
 | TODAY | "vad har jag idag", "dagens plan" | Show today's agenda (read-only) |
 | WEEK | "vad händer i veckan", "veckoplan" | Show week view (read-only) |
 | DEADLINES | "visa deadlines" | Show upcoming deadlines (read-only) |
 | REMINDERS | "visa påminnelser", "mina reminders" | Show pending reminders (read-only) |
+| QUERY_SAVED_DATA | "vilken tid påminner du mig om X" | Answer from saved records (read-only) |
 | ADD_ITEMS | "jag ska träna…", "påminn mig…" | Extract, show proposal, ask `Save this? [y/N]` |
 | COMPLETE | "jag har tränat klart" | Find planned activity, ask `Mark as completed? [y/N]` |
-| UNKNOWN | anything else | Show helpful fallback with examples |
-
-Classification is deterministic (regex-based, no LLM). Read-only intents
-produce output immediately. Write intents go through the same confirmation flow
-as the `add` and `complete` commands — the safety rule is always enforced.
+| UNKNOWN | anything else | Helpful fallback with examples |
 
 The chat service has no long-term memory: each message is classified and handled
-independently.
+independently.  For a full description of the agent components see
+[agent-architecture.md](agent-architecture.md).
 
 ## Why small layers
 
@@ -193,3 +208,5 @@ independently.
 - **Pluggable LLM** — because extraction returns a schema and the LLM client is
   isolated behind one interface, the optional OpenAI-compatible provider plugs
   in (and falls back) without changing the CLI, services, or database.
+- **Extensible agent runtime** — new tools are registered in `ToolRegistry` and
+  routed by `AgentRouter` without touching the CLI or database layers.

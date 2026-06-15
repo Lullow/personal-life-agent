@@ -122,6 +122,27 @@ confirmation first.
 
 For a full, reproducible walkthrough see [docs/demo.md](docs/demo.md).
 
+## Agent runtime
+
+The interactive `chat` mode is backed by a lightweight agent runtime:
+
+- **AgentRouter** classifies each message into a structured `AgentDecision`
+  using deterministic regex patterns (default, works offline).  An optional LLM
+  routing mode can be enabled via `LIFE_AGENT_AGENT_ROUTER_MODE=llm`; it falls
+  back to the deterministic router automatically on any failure.
+- **AgentPolicy** validates every decision before execution — unknown tools and
+  confirmation-free write decisions are rejected.
+- **AgentRuntime** dispatches read-only tools immediately and returns
+  `"needs_confirmation"` for any write or update action, so the CLI can ask the
+  user before touching the database.
+- **ToolRegistry** catalogues every capability with its action type and
+  confirmation requirement.  The same registry is used by both routing modes.
+- **Saved-data Q&A** — the `query_saved_data` tool answers read-only questions
+  about existing reminders, tasks, events, and activities without any write side
+  effects.
+
+For a detailed walkthrough see [docs/agent-architecture.md](docs/agent-architecture.md).
+
 ## Safety principle
 
 > **Natural language input never writes to the database without explicit confirmation.**
@@ -161,11 +182,12 @@ copy `.env.example` to `.env`):
 | `APP_ENV`   | `development`         | Application environment              |
 | `LOG_LEVEL` | `INFO`                | Logging level                        |
 | `DB_PATH`   | `data/life_agent.db`  | Path to the local SQLite database    |
-| `LIFE_AGENT_EXTRACTION_MODE` | `deterministic` | `deterministic` (offline) or `llm`   |
-| `LIFE_AGENT_LLM_PROVIDER`    | `openai_compatible` | Provider type for LLM mode    |
-| `LIFE_AGENT_LLM_BASE_URL`    | _(unset)_           | OpenAI-compatible base URL    |
-| `LIFE_AGENT_LLM_API_KEY`     | _(unset)_           | API key for the provider      |
-| `LIFE_AGENT_LLM_MODEL`       | _(unset)_           | Model name to request         |
+| `LIFE_AGENT_EXTRACTION_MODE`   | `deterministic`     | `deterministic` (offline) or `llm`        |
+| `LIFE_AGENT_AGENT_ROUTER_MODE` | `deterministic`     | `deterministic` or `llm` for chat routing |
+| `LIFE_AGENT_LLM_PROVIDER`      | `openai_compatible` | Provider type for LLM mode                |
+| `LIFE_AGENT_LLM_BASE_URL`      | _(unset)_           | OpenAI-compatible base URL                |
+| `LIFE_AGENT_LLM_API_KEY`       | _(unset)_           | API key for the provider                  |
+| `LIFE_AGENT_LLM_MODEL`         | _(unset)_           | Model name to request                     |
 
 ### Optional LLM extraction
 
@@ -202,11 +224,13 @@ personal-life-agent/
 ├── life_agent/
 │   ├── cli/             # Typer CLI commands and output formatters
 │   ├── services/        # Task, event, activity, reminder, planner,
-│   │                    #   extraction, confirmation, completion, chat services
+│   │                    #   extraction, confirmation, completion, chat,
+│   │                    #   and saved-data Q&A services
 │   ├── db/              # SQLite connection, schema, repositories
 │   ├── models/          # Pydantic domain models + shared enums
 │   ├── schemas/         # Extraction / planner / confirmation schemas
-│   ├── agent/           # Prompts and the safety rule
+│   ├── agent/           # AgentDecision, ToolRegistry, AgentPolicy,
+│   │                    #   AgentRouter, AgentRuntime, prompts, safety rule
 │   ├── llm/             # Optional OpenAI-compatible client + JSON parsing
 │   ├── config.py        # Environment-based settings
 │   └── main.py          # Typer app entry point
@@ -218,11 +242,13 @@ personal-life-agent/
 
 ## Project status and roadmap
 
-The MVP is feature-complete for local task/event/activity/reminder management,
-planning, and confirmed natural language input. Planned future work (real LLM
-integration, calendar export, recurring reminders, and more) is tracked in
-[docs/roadmap.md](docs/roadmap.md). Architecture is documented in
-[docs/architecture.md](docs/architecture.md).
+The project is feature-complete for local task/event/activity/reminder
+management, planner views, confirmed natural language input, interactive chat,
+and a structured agent runtime with optional LLM routing.  Planned future work
+(reminder scheduler, richer LLM routing, Google Calendar, web UI, and more) is
+tracked in [docs/roadmap.md](docs/roadmap.md).  Architecture is documented in
+[docs/architecture.md](docs/architecture.md) and
+[docs/agent-architecture.md](docs/agent-architecture.md).
 
 ## License
 
