@@ -10,6 +10,7 @@ from life_agent.main import app
 from life_agent.schemas.saved_data_query import QueryType, SavedDataQueryResult, SavedDataRecord
 from life_agent.services.saved_data_query_service import (
     answer_saved_data_question,
+    detect_saved_data_query_type,
     query_saved_data,
 )
 from life_agent.services.saved_data_response_service import (
@@ -38,6 +39,83 @@ def _seed_reminder(title: str, remind_at: datetime) -> None:
 
 def _seed_planned_activity(text: str) -> None:
     runner.invoke(app, ["add", "--yes", text])
+
+
+# ---------------------------------------------------------------------------
+# detect_saved_data_query_type
+# ---------------------------------------------------------------------------
+
+
+class TestDetectSavedDataQueryType:
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "vilken tid ska du påminna mig om att handla mat",
+            "när ska du påminna mig om träningen",
+        ],
+    )
+    def test_returns_reminder_lookup(self, text: str):
+        assert detect_saved_data_query_type(text) == "reminder_lookup"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "har jag något planerat imorgon",
+            "vad händer imorgon",
+        ],
+    )
+    def test_returns_planned_tomorrow(self, text: str):
+        assert detect_saved_data_query_type(text) == "planned_tomorrow"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "vad har jag för träningar den här veckan",
+            "träningar i veckan",
+        ],
+    )
+    def test_returns_training_week(self, text: str):
+        assert detect_saved_data_query_type(text) == "training_week"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "vad är nästa grej",
+            "vad händer härnäst",
+            "nästa påminnelse",
+        ],
+    )
+    def test_returns_next_upcoming(self, text: str):
+        assert detect_saved_data_query_type(text) == "next_upcoming"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "vad borde jag fokusera på idag",
+            "vad är viktigast idag",
+            "dagens fokus",
+        ],
+    )
+    def test_returns_daily_focus(self, text: str):
+        assert detect_saved_data_query_type(text) == "daily_focus"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "hello there",
+            "jag ska gymma idag kl 18",
+            "påminn mig att handla mat imorgon kl 10",
+            "jag har tränat klart",
+            "",
+        ],
+    )
+    def test_returns_unknown_for_non_queries(self, text: str):
+        assert detect_saved_data_query_type(text) == "unknown"
+
+    def test_no_database_access(self):
+        """detect_saved_data_query_type is pure text — no db_path needed."""
+        result = detect_saved_data_query_type("vad är nästa grej")
+        assert result == "next_upcoming"
 
 
 # ---------------------------------------------------------------------------

@@ -53,6 +53,32 @@ def answer_saved_data_question(
     return format_saved_data_query_result(result)
 
 
+def detect_saved_data_query_type(message: str) -> str:
+    """Classify *message* into a saved-data query type string.
+
+    Returns one of the :class:`QueryType` values:
+    ``"reminder_lookup"``, ``"planned_tomorrow"``, ``"training_week"``,
+    ``"next_upcoming"``, ``"daily_focus"``, or ``"unknown"``.
+
+    This function is pure text classification — no database access, no I/O.
+    Both :func:`query_saved_data` and ``AgentRouter`` use it so that
+    detection logic is defined in a single place.
+    """
+    msg = message.strip()
+
+    if _is_reminder_question(msg):
+        return QueryType.REMINDER_LOOKUP
+    if _is_tomorrow_question(msg):
+        return QueryType.PLANNED_TOMORROW
+    if _is_training_week_question(msg):
+        return QueryType.TRAINING_WEEK
+    if _is_next_upcoming_question(msg):
+        return QueryType.NEXT_UPCOMING
+    if _is_daily_focus_question(msg):
+        return QueryType.DAILY_FOCUS
+    return QueryType.UNKNOWN
+
+
 def query_saved_data(
     message: str,
     db_path: str | None = None,
@@ -62,20 +88,17 @@ def query_saved_data(
     """Classify *message* and return a structured query result."""
     msg = message.strip()
     _today = today or date.today()
+    qtype = detect_saved_data_query_type(msg)
 
-    if _is_reminder_question(msg):
+    if qtype == QueryType.REMINDER_LOOKUP:
         return _query_reminder(msg, db_path=db_path)
-
-    if _is_tomorrow_question(msg):
+    if qtype == QueryType.PLANNED_TOMORROW:
         return _query_tomorrow(msg, _today, db_path=db_path)
-
-    if _is_training_week_question(msg):
+    if qtype == QueryType.TRAINING_WEEK:
         return _query_training_week(msg, _today, db_path=db_path)
-
-    if _is_next_upcoming_question(msg):
+    if qtype == QueryType.NEXT_UPCOMING:
         return _query_next_upcoming(msg, _today, db_path=db_path)
-
-    if _is_daily_focus_question(msg):
+    if qtype == QueryType.DAILY_FOCUS:
         return _query_daily_focus(msg, _today, db_path=db_path)
 
     return SavedDataQueryResult(

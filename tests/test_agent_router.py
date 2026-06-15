@@ -213,3 +213,38 @@ class TestDailyFocusRouting:
     def test_does_not_route_to_extract(self, router: AgentRouter):
         d = router.route("vad borde jag fokusera på idag")
         assert d.tool_name != "extract_items"
+
+
+class TestCentralizedDetection:
+    """Verify the router delegates saved-data query detection to
+    detect_saved_data_query_type rather than maintaining its own patterns."""
+
+    @pytest.mark.parametrize(
+        "text,expected_tool",
+        [
+            ("vilken tid ska du påminna mig om att handla mat", "query_saved_data"),
+            ("har jag något planerat imorgon", "query_saved_data"),
+            ("vad har jag för träningar den här veckan", "query_saved_data"),
+            ("vad är nästa grej", "query_saved_data"),
+            ("vad händer härnäst", "query_saved_data"),
+            ("vad borde jag fokusera på idag", "query_saved_data"),
+            ("vad är viktigast idag", "query_saved_data"),
+        ],
+    )
+    def test_all_query_types_route_to_query_saved_data(
+        self, router: AgentRouter, text: str, expected_tool: str
+    ):
+        d = router.route(text)
+        assert d.tool_name == expected_tool
+
+    def test_extract_still_wins_for_creation(self, router: AgentRouter):
+        d = router.route("påminn mig att handla mat imorgon kl 10")
+        assert d.tool_name == "extract_items"
+
+    def test_completion_still_works(self, router: AgentRouter):
+        d = router.route("jag har tränat klart")
+        assert d.tool_name == "complete_activity"
+
+    def test_unknown_still_unknown(self, router: AgentRouter):
+        d = router.route("hello there")
+        assert d.action_type == "unknown"

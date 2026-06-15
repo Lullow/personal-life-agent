@@ -16,7 +16,6 @@ execution.
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from typing import Any, Literal, Protocol
@@ -26,6 +25,7 @@ from life_agent.agent.policy import validate_decision_safety
 from life_agent.agent.prompts import ROUTING_SYSTEM_PROMPT, ROUTING_USER_PROMPT_TEMPLATE
 from life_agent.agent.tools import ToolRegistry, build_default_tool_registry
 from life_agent.services.completion_service import is_completion_phrase
+from life_agent.services.saved_data_query_service import detect_saved_data_query_type
 
 log = logging.getLogger(__name__)
 
@@ -76,43 +76,6 @@ _REMINDER_PATTERNS = [
         r"\bvisa\s+reminders\b",
         r"\bshow\s+reminders\b",
         r"\bpåminnelser\b",
-    )
-]
-
-# Query patterns — checked BEFORE planning markers so that "handla" in a
-# question phrase doesn't accidentally trigger extraction.
-_QUERY_PATTERNS = [
-    re.compile(p, re.IGNORECASE)
-    for p in (
-        r"\bvilken\s+tid\b",
-        r"\bnär\s+ska\s+du\s+påminna\b",
-        r"\bnär\s+påminner\b",
-        r"\bpåminnelse\s+om\b",
-        r"\bpåminna\s+mig\s+om\b",
-        r"\bhar\s+jag\s+något\s+planerat\s+imorgon\b",
-        r"\bvad\s+händer\s+imorgon\b",
-        r"\bvad\s+har\s+jag\s+imorgon\b",
-        r"\bvad\s+har\s+jag\s+för\s+träning",
-        r"\bträningar?\s+den\s+här\s+veckan\b",
-        r"\bträningar?\s+i\s+veckan\b",
-        r"\bnästa\s+grej\b",
-        r"\bnästa\s+påminnelse\b",
-        r"\bnästa\s+händelse\b",
-        r"\bnästa\s+uppgift\b",
-        r"\bnästa\s+aktivitet\b",
-        r"\bvad\s+är\s+nästa\b",
-        r"\bvad\s+händer\s+härnäst\b",
-        r"\bvad\s+har\s+jag\s+närmast\b",
-        r"\bvad\s+är\s+min\s+nästa\b",
-        r"\bhärnäst\b",
-        r"\bnärmast\b",
-        r"\bfokusera\s+på\s+idag\b",
-        r"\bviktigast\s+idag\b",
-        r"\bprioritera\s+idag\b",
-        r"\bdagens\s+fokus\b",
-        r"\bmin\s+viktigaste\b.*\bidag\b",
-        r"\bvad\s+borde\s+jag\b.*\bidag\b",
-        r"\bvad\s+ska\s+jag\s+fokusera\b",
     )
 ]
 
@@ -291,9 +254,11 @@ class AgentRouter:
 
         lower = stripped.lower()
 
-        # Query patterns are checked first: they are specific question forms
-        # that would otherwise be caught by the broader week/planning patterns.
-        if any(p.search(lower) for p in _QUERY_PATTERNS):
+        # Saved-data query detection is checked first: these are specific
+        # question forms that would otherwise be caught by broader
+        # week/planning patterns.  Uses the centralised classifier in
+        # saved_data_query_service so patterns are defined once.
+        if detect_saved_data_query_type(stripped) != "unknown":
             return AgentDecision(
                 intent="query_saved_data",
                 tool_name="query_saved_data",
