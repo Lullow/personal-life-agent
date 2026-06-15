@@ -42,7 +42,7 @@ _TOOL_TO_INTENT: dict[str | None, ChatIntent] = {
     "query_saved_data": ChatIntent.QUERY_SAVED_DATA,
 }
 
-_default_router = AgentRouter()
+_default_router = AgentRouter.from_settings()
 
 
 def classify_intent(text: str, *, router: AgentRouter | None = None) -> ChatIntent:

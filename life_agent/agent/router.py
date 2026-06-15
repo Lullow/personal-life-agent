@@ -150,6 +150,20 @@ class AgentRouter:
         self._registry = registry or build_default_tool_registry()
         self._llm_client = llm_client
 
+    @classmethod
+    def from_settings(cls) -> "AgentRouter":
+        """Build a router whose mode is read from application settings.
+
+        Reads ``LIFE_AGENT_AGENT_ROUTER_MODE`` (default ``"deterministic"``).
+        """
+        from life_agent.config import get_settings
+
+        settings = get_settings()
+        mode: RoutingMode = (
+            "llm" if settings.agent_router_mode == "llm" else "deterministic"
+        )
+        return cls(mode=mode)
+
     @property
     def mode(self) -> RoutingMode:
         return self._mode

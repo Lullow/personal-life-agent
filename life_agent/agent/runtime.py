@@ -57,7 +57,7 @@ class AgentRuntime:
         router: AgentRouter | None = None,
         db_path: str | None = None,
     ) -> None:
-        self._router = router or AgentRouter()
+        self._router = router or AgentRouter.from_settings()
         self._db_path = db_path
 
     @property
