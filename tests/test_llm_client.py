@@ -79,7 +79,7 @@ def test_from_settings_disabled_without_keys():
 
 def test_extract_structured_parses_valid_json(monkeypatch):
     client = _enabled_client()
-    monkeypatch.setattr(client, "_chat_completion", lambda s, u: VALID_JSON)
+    monkeypatch.setattr(client, "_chat_completion", lambda s, u, **kw: VALID_JSON)
     data = client.extract_structured("sys", "user")
     assert isinstance(data, dict)
     assert data["confidence"] == 0.9
@@ -89,7 +89,7 @@ def test_extract_structured_parses_valid_json(monkeypatch):
 def test_extract_structured_strips_code_fences(monkeypatch):
     client = _enabled_client()
     fenced = "```json\n" + VALID_JSON + "\n```"
-    monkeypatch.setattr(client, "_chat_completion", lambda s, u: fenced)
+    monkeypatch.setattr(client, "_chat_completion", lambda s, u, **kw: fenced)
     data = client.extract_structured("sys", "user")
     assert isinstance(data, dict)
     assert data["confidence"] == 0.9
@@ -97,14 +97,14 @@ def test_extract_structured_strips_code_fences(monkeypatch):
 
 def test_extract_structured_invalid_json_returns_none(monkeypatch):
     client = _enabled_client()
-    monkeypatch.setattr(client, "_chat_completion", lambda s, u: "not json at all")
+    monkeypatch.setattr(client, "_chat_completion", lambda s, u, **kw: "not json at all")
     assert client.extract_structured("sys", "user") is None
 
 
 def test_extract_structured_network_error_returns_none(monkeypatch):
     client = _enabled_client()
 
-    def boom(system_prompt, user_text):
+    def boom(system_prompt, user_text, **kwargs):
         raise RuntimeError("network down")
 
     monkeypatch.setattr(client, "_chat_completion", boom)
@@ -131,10 +131,11 @@ def test_chat_completion_reads_message_content(monkeypatch):
         return {"choices": [{"message": {"content": VALID_JSON}}]}
 
     monkeypatch.setattr(client, "_post", fake_post)
-    content = client._chat_completion("sys", "user")
+    content = client._chat_completion("sys", "user", json_mode=True)
     assert content == VALID_JSON
     assert captured["url"].endswith("/chat/completions")
     assert captured["payload"]["model"] == "m"
+    assert captured["payload"]["response_format"] == {"type": "json_object"}
 
 
 # ---------------------------------------------------------------------------

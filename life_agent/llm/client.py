@@ -106,15 +106,46 @@ class LLMClient:
         if not self.enabled:
             return None
         try:
-            content = self._chat_completion(system_prompt, user_text)
+            content = self._chat_completion(system_prompt, user_text, json_mode=True)
         except Exception:
             return None
         return _extract_json(content)
 
+    def generate_text(
+        self,
+        system_prompt: str,
+        user_text: str,
+    ) -> str | None:
+        """Return a plain-text response from the LLM, or ``None``.
+
+        Unlike :meth:`extract_structured` this does **not** request JSON mode
+        and returns the raw assistant message.  Intended for conversational
+        responses where no structured parsing is needed.
+
+        Never raises: a disabled client, network failure, or empty response
+        all yield ``None``.
+        """
+        if not self.enabled:
+            return None
+        try:
+            content = self._chat_completion(system_prompt, user_text, json_mode=False)
+        except Exception:
+            return None
+        if not content or not content.strip():
+            return None
+        return content.strip()
+
     # -- low-level transport (separated so tests can monkeypatch it) --------
 
-    def _chat_completion(self, system_prompt: str, user_text: str) -> str | None:
-        """Call the chat-completions endpoint and return the message content."""
+    def _chat_completion(
+        self, system_prompt: str, user_text: str, *, json_mode: bool
+    ) -> str | None:
+        """Call the chat-completions endpoint and return the message content.
+
+        *json_mode* selects between deterministic JSON-object output (used by
+        :meth:`extract_structured`) and free-form text (used by
+        :meth:`generate_text`).
+        """
         url = (self.base_url or "").rstrip("/") + "/chat/completions"
         payload = {
             "model": self.model,
@@ -122,9 +153,10 @@ class LLMClient:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_text},
             ],
-            "temperature": 0,
-            "response_format": {"type": "json_object"},
+            "temperature": 0 if json_mode else 0.7,
         }
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
         data = self._post(url, payload)
         choices = data.get("choices") or []
         if not choices:

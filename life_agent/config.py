@@ -19,6 +19,10 @@ ROUTER_MODE_LLM = "llm"
 RESPONSE_MODE_TEMPLATE = "template"
 RESPONSE_MODE_LLM = "llm"
 
+# Conversation fallback modes
+CONVERSATION_MODE_OFF = "off"
+CONVERSATION_MODE_ON = "on"
+
 
 class Settings(BaseModel):
     """Minimal settings for the MVP foundation."""
@@ -45,6 +49,12 @@ class Settings(BaseModel):
         alias="LIFE_AGENT_SAVED_DATA_RESPONSE_MODE",
     )
 
+    # Conversational LLM fallback for unknown messages
+    conversation_mode: str = Field(
+        default=CONVERSATION_MODE_OFF,
+        alias="LIFE_AGENT_CONVERSATION_MODE",
+    )
+
     # Optional LLM provider (OpenAI-compatible). Unset by default so the app
     # works fully offline with the deterministic extractor.
     llm_provider: str = Field(
@@ -69,6 +79,9 @@ class Settings(BaseModel):
             ),
             LIFE_AGENT_SAVED_DATA_RESPONSE_MODE=os.getenv(
                 "LIFE_AGENT_SAVED_DATA_RESPONSE_MODE", RESPONSE_MODE_TEMPLATE
+            ),
+            LIFE_AGENT_CONVERSATION_MODE=os.getenv(
+                "LIFE_AGENT_CONVERSATION_MODE", CONVERSATION_MODE_OFF
             ),
             LIFE_AGENT_LLM_PROVIDER=os.getenv(
                 "LIFE_AGENT_LLM_PROVIDER", "openai_compatible"

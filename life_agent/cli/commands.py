@@ -378,6 +378,7 @@ def register_commands(app: typer.Typer) -> None:
     @app.command("chat")
     def chat() -> None:
         """Start an interactive chat session."""
+        from life_agent.agent.runtime import AgentRuntime
         from life_agent.agent.safety import is_affirmative
         from life_agent.cli.formatters import (
             format_completion_candidate,
@@ -407,6 +408,7 @@ def register_commands(app: typer.Typer) -> None:
         from life_agent.services.extraction_service import extract_from_text
 
         console.print(GREETING)
+        runtime = AgentRuntime()
 
         while True:
             try:
@@ -504,5 +506,9 @@ def register_commands(app: typer.Typer) -> None:
                     )
                 continue
 
-            # UNKNOWN
-            console.print(UNKNOWN_TEXT)
+            # UNKNOWN — try conversational LLM fallback via AgentRuntime
+            resp = runtime.handle_message(stripped)
+            if resp.kind == "display":
+                console.print(resp.text)
+            else:
+                console.print(UNKNOWN_TEXT)
