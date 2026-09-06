@@ -9,7 +9,7 @@ from life_agent.schemas.confirmation import (
     ConfirmationSaveResult,
 )
 from life_agent.schemas.extraction import ExtractionResult
-from life_agent.schemas.planner import TodayAgenda, WeekAgenda
+from life_agent.schemas.planner import DailyAgenda, TodayAgenda, WeekAgenda
 
 
 def format_task_line(index: int, task: Task) -> str:
@@ -100,6 +100,37 @@ def format_today_agenda(agenda: TodayAgenda) -> str:
     ):
         lines.append("")
         lines.append("Nothing on the agenda.")
+
+    return "\n".join(lines)
+
+
+def format_daily_agenda(agenda: DailyAgenda) -> str:
+    """Render one day as a timeline, with untimed items collected at the end."""
+    lines: list[str] = [f"{format_day_heading(agenda.date)}:"]
+
+    if not agenda.items:
+        lines.append("")
+        lines.append("Nothing on the agenda.")
+        return "\n".join(lines)
+
+    timed = [i for i in agenda.items if i.start_time is not None]
+    untimed = [i for i in agenda.items if i.start_time is None]
+
+    if timed:
+        lines.append("")
+        for item in timed:
+            when = item.start_time.strftime("%H:%M")
+            if item.end_time is not None:
+                when = f"{when}-{item.end_time.strftime('%H:%M')}"
+            detail = f"  ({item.notes})" if item.notes else ""
+            lines.append(f"  {when}  {item.title}{detail}")
+
+    if untimed:
+        lines.append("")
+        lines.append("Any time:")
+        for item in untimed:
+            detail = f"  ({item.notes})" if item.notes else ""
+            lines.append(f"  - {item.title}{detail}")
 
     return "\n".join(lines)
 

@@ -138,11 +138,11 @@ def get_reminders_response(db_path: str | None = None) -> str:
 
 
 def get_day_response(day: date, db_path: str | None = None) -> str:
-    """Render the agenda for one specific calendar day."""
-    from life_agent.cli.formatters import format_today_agenda
-    from life_agent.services.planner_service import get_day_agenda
+    """Render one calendar day as a timeline, in the order it is lived."""
+    from life_agent.cli.formatters import format_daily_agenda
+    from life_agent.services.planner_service import get_day_timeline
 
-    return format_today_agenda(get_day_agenda(day, db_path=db_path))
+    return format_daily_agenda(get_day_timeline(day, db_path=db_path))
 
 
 def get_range_response(start: date, end: date, db_path: str | None = None) -> str:

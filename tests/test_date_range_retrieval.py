@@ -184,3 +184,67 @@ class TestRangeAgenda:
         assert agenda.start_date == JUNE
         assert agenda.end_date == JUNE + timedelta(days=6)
         assert len(agenda.days) == 7
+
+
+# ---------------------------------------------------------------------------
+# The day as a timeline
+# ---------------------------------------------------------------------------
+
+
+class TestDayTimeline:
+    def test_the_day_is_ordered_by_clock_time(self, db_path):
+        from life_agent.services.planner_service import get_day_timeline
+
+        _event(db_path, "Lämna grabben på förskolan", datetime(2026, 6, 11, 9, 30))
+        _activity(db_path, "Träna rygg", datetime(2026, 6, 11, 10, 0))
+        _event(db_path, "Möte", datetime(2026, 6, 11, 8, 0))
+
+        titles = [i.title for i in get_day_timeline(JUNE, db_path).items]
+
+        assert titles == ["Möte", "Lämna grabben på förskolan", "Träna rygg"]
+
+    def test_tasks_have_no_time_and_come_last(self, db_path):
+        from life_agent.services.planner_service import get_day_timeline
+
+        create_task(Task(title="Laga mat", due_date=JUNE), db_path)
+        _activity(db_path, "Träna rygg", datetime(2026, 6, 11, 10, 0))
+
+        items = get_day_timeline(JUNE, db_path).items
+
+        assert [i.title for i in items] == ["Träna rygg", "Laga mat"]
+        assert items[-1].start_time is None
+
+    def test_tasks_due_on_another_day_are_not_included(self, db_path):
+        from life_agent.services.planner_service import get_day_timeline
+
+        create_task(Task(title="Later", due_date=date(2026, 6, 12)), db_path)
+
+        assert get_day_timeline(JUNE, db_path).items == []
+
+    def test_completed_activities_are_marked(self, db_path):
+        from life_agent.services.planner_service import get_day_timeline
+
+        _activity(
+            db_path,
+            "Träna rygg",
+            datetime(2026, 6, 11, 10, 0),
+            status=ActivityStatus.COMPLETED,
+        )
+
+        assert "done" in get_day_timeline(JUNE, db_path).items[0].notes
+
+    def test_rendered_timeline_reads_as_a_sequence(self, db_path):
+        _event(db_path, "Lämna grabben på förskolan", datetime(2026, 6, 11, 9, 30))
+        _activity(db_path, "Träna rygg", datetime(2026, 6, 11, 10, 0))
+        create_task(Task(title="Laga mat", due_date=JUNE), db_path)
+
+        text = get_day_response(JUNE, db_path)
+        body = text.splitlines()
+
+        assert "09:30  Lämna grabben på förskolan" in body[2]
+        assert "10:00  Träna rygg" in body[3]
+        assert "Any time:" in text
+        assert "- Laga mat" in text
+
+    def test_an_empty_day_says_so(self, db_path):
+        assert "Nothing on the agenda" in get_day_response(JUNE, db_path)

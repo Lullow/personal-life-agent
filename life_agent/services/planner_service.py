@@ -8,12 +8,19 @@ take explicit dates, and ``get_today_agenda`` / ``get_week_agenda`` are the
 today-shaped defaults over them.
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from life_agent.db.repositories import list_activities, list_events, list_tasks
 from life_agent.models import ActivityLog, CalendarEvent, Task
-from life_agent.models.common import Priority, TaskStatus
-from life_agent.schemas.planner import DayPlan, TodayAgenda, WeekAgenda
+from life_agent.models.common import ActivityStatus, Priority, TaskStatus
+from life_agent.schemas.planner import (
+    AgendaItem,
+    AgendaItemType,
+    DailyAgenda,
+    DayPlan,
+    TodayAgenda,
+    WeekAgenda,
+)
 
 _PRIORITY_RANK: dict[Priority, int] = {
     Priority.HIGH: 0,
@@ -82,6 +89,64 @@ def get_today_agenda(
 ) -> TodayAgenda:
     """Return today's agenda (:func:`get_day_agenda` for the current date)."""
     return get_day_agenda(today, db_path)
+
+
+def get_day_timeline(
+    day: date | None = None,
+    db_path: str | None = None,
+) -> DailyAgenda:
+    """Return one day as a single list in the order the day is lived.
+
+    Events, activities, and tasks due that day are merged into
+    :class:`AgendaItem` rows and sorted by clock time.  Tasks carry only a due
+    date, so they have no time and land at the end — which is also where they
+    belong in a morning read: the things to fit in somewhere.
+    """
+    target = day or date.today()
+    items: list[AgendaItem] = []
+
+    for event in list_events(db_path, start=target, end=target):
+        items.append(
+            AgendaItem(
+                title=event.title,
+                item_type=AgendaItemType.EVENT,
+                start_time=event.start_time,
+                end_time=event.end_time,
+                source_id=event.id,
+                notes=event.location or event.description,
+            )
+        )
+
+    for activity in _activities_between(target, target, db_path):
+        details = []
+        if activity.duration_minutes:
+            details.append(f"{activity.duration_minutes} min")
+        if activity.status == ActivityStatus.COMPLETED:
+            details.append("done")
+        items.append(
+            AgendaItem(
+                title=activity.title,
+                item_type=AgendaItemType.ACTIVITY,
+                start_time=activity.logged_at,
+                source_id=activity.id,
+                notes=", ".join(details) or activity.notes,
+            )
+        )
+
+    for task in _sort_tasks_by_priority(
+        [t for t in _active_tasks(db_path) if t.due_date == target]
+    ):
+        items.append(
+            AgendaItem(
+                title=task.title,
+                item_type=AgendaItemType.TASK,
+                source_id=task.id,
+                notes=task.description,
+            )
+        )
+
+    items.sort(key=lambda i: (i.start_time is None, i.start_time or datetime.min))
+    return DailyAgenda(date=target, items=items)
 
 
 def get_range_agenda(
