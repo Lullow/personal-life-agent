@@ -63,6 +63,12 @@ Supporting modules: `models/` (persisted domain objects + shared enums),
 `agent/` (the conversation loop, see below), `llm/` (dependency-free
 OpenAI-compatible client using only `urllib`).
 
+Architecture decisions are recorded as ADRs in `docs/adr/` — one numbered file
+each, context / decision / consequences, never edited once written. Propose one
+whenever a decision shapes code that has yet to be written, or rests on a
+constraint the code cannot show. Format and the supersede rule:
+`docs/adr/README.md`.
+
 Every repository function accepts an optional `db_path`, which is how test
 isolation and the `DB_PATH` env var both work. The list functions also accept
 inclusive day bounds (`start`/`end`, or `due_from`/`due_to` for tasks).
@@ -180,17 +186,22 @@ looks.
 ```python
 @dataclass(frozen=True)
 class MemoryRecord:
+    id: str                   # deterministic: f"{session_id}:{turn_index}"
     role: Literal["user", "assistant"]
     content: str
-    kind: Literal["message", "outcome"]
+    kind: Literal["message", "outcome", "summary"]
     at: datetime
     session_id: str
+    derived_from: tuple[str, ...] = ()   # ids a summary ate; empty for raw turns
 
 @dataclass(frozen=True)
 class Retrieval:
-    messages: list[dict[str, str]]
-    sources: list[str]        # record ids that contributed
+    messages: list[dict[str, str]]   # ready for chat_json, current turn excluded
+    sources: tuple[str, ...]         # record ids that reached the context
     tokens_used: int
+
+class TokenCounter(Protocol):
+    def count(self, text: str) -> int: ...
 
 class ConversationMemory(Protocol):
     def write(self, record: MemoryRecord) -> None: ...
@@ -212,6 +223,10 @@ Three implementations, in this order:
 evaluation replays histories step by step and asks what the memory should
 believe at a point in time. A leak here silently invalidates every number.
 
+A `kind="summary"` record carries the time consolidation *ran*, never the time
+of the records it derives from. Backdating a summary walks it straight past the
+cutoff and leaks the future into `retrieve(at=T)`.
+
 **Outcomes survive.** A record with `kind="outcome"` is a fact read out of the
 domain database, not a model utterance. It is preserved verbatim and is never
 dropped, summarised, or paraphrased during consolidation. The database gets the
@@ -226,17 +241,27 @@ comparing strategies under one policy instead of comparing the policies.
 characters-per-token differ between dense summaries and verbose raw turns —
 especially in Swedish, where compounds tokenize badly.
 
+**Ids are deterministic.** `f"{session_id}:{turn_index}"`, derived from
+position, never random. Replaying one history twice, or across two strategies,
+must produce the same ids — otherwise retrieval precision and recall are not
+comparable between the things being compared.
+
 ### Boundaries
 
 Memory persistence writes to its own store. **Never** through
 `db/repositories.py`, never to a domain table. Memory is read-only into the
 prompt and has no write path into domain data.
 
-`ConsolidatingMemory` makes an additional LLM call, outside the turn. That call must never be able to
-produce a tool call — same discipline `READ_ANSWER_SYSTEM_PROMPT` already has.
+`ConsolidatingMemory` makes an additional LLM call, outside the turn.
+That call must never be able to produce a tool call — same discipline `READ_ANSWER_SYSTEM_PROMPT` already has.
 
 Tests are offline (`tests/conftest.py` neutralises `.env`). Any embedding-based
 retrieval needs a deterministic fake embedder behind the same Protocol.
+
+Cost is measured **on the LLM client**, not inside memory: a `RecordingLLMClient`
+wraps `AgentLLMClient` and logs each call with a label ("consolidate",
+"answer", …). A strategy that retrieves more context makes the answer call more
+expensive, and a counter living inside the memory module cannot see that.
 
 ### Out of scope
 
