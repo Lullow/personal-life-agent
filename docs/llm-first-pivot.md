@@ -1,6 +1,6 @@
 # LLM-first pivot
 
-**Status:** agreed 2026-09-05, not yet implemented.
+**Status:** agreed 2026-09-05. Steps 1-8 done 2026-09-06; the spike passed.
 **Applies to:** the `spike/llm-first` branch. `main` is preserved as-is.
 
 This document records a design decision that reverses the governing principle
@@ -158,6 +158,13 @@ the model you switch to tomorrow.
 7. Wire in the existing confirmation flow
 8. Run the target sentence
 
+Steps 1-8 are done. What exists now: `chat_json()` in `llm/client.py`,
+`agent/conversation.py` holding the loop, `AGENT_SYSTEM_PROMPT_TEMPLATE` in
+`agent/prompts.py`, and `python -m life_agent agent` as a temporary CLI entry
+point. The removals listed above have deliberately **not** happened yet — the
+old `chat` command and its 549 tests still stand, so the two paths can be
+compared before either is torn out.
+
 ## Definition of done for the spike
 
 > "Jag har möte på Odenplan kl 12 imorgon, behöver plugga machine learning,
@@ -169,6 +176,47 @@ couple of evenings; failing inside that box is also an answer.
 The point of the spike is to feel whether the idea carries before anything is
 torn out. Building the read tools first would mean a week of mechanical work
 before that question gets answered.
+
+## Spike result, 2026-09-06
+
+The sentence produced four correct items on the first run against
+`openai/gpt-4o-mini` via OpenRouter: the event at 12:00 tomorrow with location
+Odenplan and category meeting, two study/errand tasks, and one training
+activity. Nothing was written; the loop stopped at the confirmation prompt as
+designed. The idea carries.
+
+What the run cost was one model call and roughly 3500 characters of system
+prompt. Five further sentences — a greeting, a read question, a vague-time
+plan, a reminder, and a completion phrase — all reached the right tool after
+one round of prompt tuning.
+
+Three findings worth keeping:
+
+**The clarify rule was too aggressive.** The first prompt said an item with no
+time cannot be saved, and the model applied that to everything: "jag ska träna
+på kvällen" and even "påminn mig att handla mat imorgon kl 10" came back as
+clarifying questions. Tasks and activities are saveable with a title alone —
+only events and reminders need a clock time. The rule now says so, and says to
+save what is complete and raise the rest in `reply`. This is the shape of
+future maintenance: one prompt paragraph, not one more branch.
+
+**The model miscounts in prose.** It prepared four items and wrote "tre saker".
+Harmless because the confirmation preview and the post-save line are generated
+from `ExtractionResult` and `ConfirmationSaveResult`, never from the reply —
+which is exactly the structural argument above, confirmed in practice on the
+first day.
+
+**The schema cannot express "tomorrow, time unknown".** `ExtractedActivity`
+has a single `logged_at` datetime, so "träna på kvällen imorgon" either invents
+a clock time or loses the date. This is a real gap in the four tables, not a
+prompt problem, and it belongs with the deferred retrieval work below.
+
+One thing the pivot found on the way: nothing in the codebase ever loaded
+`.env`. `Settings.from_env()` read `os.getenv` only and `python-dotenv` was
+not a dependency, so a `.env` file was inert. `config.py` now reads it with a
+small stdlib parser — the environment still wins over the file, the file is
+never merged into `os.environ`, and `tests/conftest.py` neutralises it so a
+machine with credentials configured tests identically to one without.
 
 ## Deliberately deferred
 

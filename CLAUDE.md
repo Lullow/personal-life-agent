@@ -118,6 +118,15 @@ CLI chat loop → ChatService.classify_intent() → AgentRouter.route()
 Full walkthrough with the tool table: `docs/agent-architecture.md`. Layer
 details: `docs/architecture.md`.
 
+### The LLM-first loop (spike branch only)
+
+`agent/conversation.py` + `python -m life_agent agent` are the reversal of the
+above: one LLM call per message returning `{"tool", "arguments", "reply"}`, no
+pattern matching anywhere. `action_type` and `requires_confirmation` are still
+read from `ToolRegistry`, never from the model's JSON, so the safety chain is
+unchanged. It runs alongside the deterministic `chat` command until it is
+proven; see `docs/llm-first-pivot.md` for what replaces what.
+
 ### Extraction
 
 `extraction_service.extract_from_text()` always returns an

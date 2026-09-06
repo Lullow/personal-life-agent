@@ -512,3 +512,98 @@ def register_commands(app: typer.Typer) -> None:
                 console.print(resp.text)
             else:
                 console.print(UNKNOWN_TEXT)
+
+    # ------------------------------------------------------------------
+    # LLM-first agent loop (spike — see docs/llm-first-pivot.md)
+    # ------------------------------------------------------------------
+
+    @app.command("agent")
+    def agent() -> None:
+        """Talk to the LLM-driven agent (spike entry point for `chat`)."""
+        from rich.markup import escape
+
+        from life_agent.agent.conversation import ConversationAgent
+        from life_agent.agent.safety import is_affirmative
+        from life_agent.cli.formatters import (
+            format_completion_candidate,
+            format_confirmation_proposal,
+            format_save_result,
+        )
+        from life_agent.services.completion_service import complete_activity
+        from life_agent.services.confirmation_service import save_confirmed_extraction
+
+        quit_words = {"/quit", "/exit", "quit", "exit", "bye", "hejdå", "avsluta"}
+
+        console.print(
+            "Hello! Just tell me what is going on — I will figure out the rest.\n"
+            "Nothing is saved until you say yes.  Type /quit to leave."
+        )
+        conversation = ConversationAgent()
+
+        while True:
+            try:
+                user_input = console.input("\n[bold]You:[/bold] ")
+            except (EOFError, KeyboardInterrupt):
+                console.print("\nBye!")
+                break
+
+            stripped = user_input.strip()
+            if not stripped:
+                continue
+            if stripped.lower() in quit_words:
+                console.print("Bye!")
+                break
+
+            turn = conversation.send(stripped)
+            if turn.reply:
+                console.print(f"[cyan]Agent:[/cyan] {escape(turn.reply)}")
+
+            if turn.kind == "display":
+                console.print()
+                console.print(turn.text)
+                continue
+
+            if turn.kind == "reply":
+                if turn.proposal is not None:
+                    console.print(
+                        "[yellow]Nothing complete enough to save yet.[/yellow]"
+                    )
+                continue
+
+            flow = turn.data.get("flow")
+
+            if flow == "save":
+                console.print()
+                console.print(format_confirmation_proposal(turn.proposal))
+                console.print()
+                if is_affirmative(console.input("Save this? [y/N] ")):
+                    outcome = format_save_result(
+                        save_confirmed_extraction(turn.extraction, confirmed=True)
+                    )
+                    console.print(f"[bold green]{outcome}[/bold green]")
+                else:
+                    outcome = "Cancelled. Nothing was saved."
+                    console.print(f"[bold yellow]{outcome}[/bold yellow]")
+                # The database, not the model, gets the last word on what happened.
+                conversation.record_outcome(outcome)
+                continue
+
+            if flow == "complete":
+                candidate = turn.data["candidate"]
+                console.print()
+                console.print(format_completion_candidate(candidate))
+                console.print()
+                if is_affirmative(
+                    console.input("Mark this activity as completed? [y/N] ")
+                ):
+                    updated = complete_activity(candidate.id, confirmed=True)
+                    outcome = (
+                        f"Completed: {updated.title}"
+                        if updated is not None
+                        else "Could not update the activity."
+                    )
+                    console.print(f"[bold green]{outcome}[/bold green]")
+                else:
+                    outcome = "Cancelled. Nothing was updated."
+                    console.print(f"[bold yellow]{outcome}[/bold yellow]")
+                conversation.record_outcome(outcome)

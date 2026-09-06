@@ -135,6 +135,32 @@ class LLMClient:
             return None
         return content.strip()
 
+    def chat_json(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, str]],
+    ) -> dict | None:
+        """Return a parsed JSON object for a multi-turn conversation.
+
+        *messages* is the conversation so far as ``{"role", "content"}`` dicts
+        (``"user"`` / ``"assistant"``); the system prompt is prepended here.
+        This is the single JSON contract used by the conversation loop, kept
+        in one place so native tool-calling can replace it later without the
+        runtime noticing.
+
+        Never raises: a disabled client, network failure, or unparseable
+        response all yield ``None``.
+        """
+        if not self.enabled:
+            return None
+        try:
+            content = self._chat_completion_messages(
+                system_prompt, messages, json_mode=True
+            )
+        except Exception:
+            return None
+        return _extract_json(content)
+
     # -- low-level transport (separated so tests can monkeypatch it) --------
 
     def _chat_completion(
@@ -146,12 +172,26 @@ class LLMClient:
         :meth:`extract_structured`) and free-form text (used by
         :meth:`generate_text`).
         """
+        return self._chat_completion_messages(
+            system_prompt,
+            [{"role": "user", "content": user_text}],
+            json_mode=json_mode,
+        )
+
+    def _chat_completion_messages(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, str]],
+        *,
+        json_mode: bool,
+    ) -> str | None:
+        """Call the chat-completions endpoint with a full message list."""
         url = (self.base_url or "").rstrip("/") + "/chat/completions"
         payload = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_text},
+                *messages,
             ],
             "temperature": 0 if json_mode else 0.7,
         }
