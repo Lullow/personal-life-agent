@@ -116,6 +116,20 @@ _DEFAULT_TOOLS: list[ToolDefinition] = [
         handler_name="complete_activity",
     ),
     ToolDefinition(
+        name="reschedule_item",
+        description="Move a saved item to a new time",
+        action_type="update",
+        requires_confirmation=True,
+        handler_name="reschedule_item",
+    ),
+    ToolDefinition(
+        name="delete_item",
+        description="Delete a saved item",
+        action_type="delete",
+        requires_confirmation=True,
+        handler_name="delete_item",
+    ),
+    ToolDefinition(
         name="ask_clarifying_question",
         description="Ask the user a clarifying question",
         action_type="clarify",

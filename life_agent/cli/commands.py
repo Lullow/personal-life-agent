@@ -531,6 +531,7 @@ def register_commands(app: typer.Typer) -> None:
         )
         from life_agent.services.completion_service import complete_activity
         from life_agent.services.confirmation_service import save_confirmed_extraction
+        from life_agent.services.edit_service import delete_item, reschedule_item
 
         quit_words = {"/quit", "/exit", "quit", "exit", "bye", "hejdå", "avsluta"}
 
@@ -564,6 +565,8 @@ def register_commands(app: typer.Typer) -> None:
                 continue
 
             if turn.kind == "reply":
+                if turn.text:
+                    console.print(turn.text)
                 if turn.proposal is not None:
                     console.print(
                         "[yellow]Nothing complete enough to save yet.[/yellow]"
@@ -585,6 +588,42 @@ def register_commands(app: typer.Typer) -> None:
                     outcome = "Cancelled. Nothing was saved."
                     console.print(f"[bold yellow]{outcome}[/bold yellow]")
                 # The database, not the model, gets the last word on what happened.
+                conversation.record_outcome(outcome)
+                continue
+
+            if flow in ("delete", "reschedule"):
+                match = turn.data["match"]
+                new_time = turn.data.get("new_time")
+                console.print()
+                console.print(f"Matched: {match.describe()}")
+                console.print()
+                if flow == "delete":
+                    question = "Delete this? [y/N] "
+                else:
+                    question = (
+                        f"Move it to {new_time.strftime('%Y-%m-%d %H:%M')}? [y/N] "
+                    )
+
+                if is_affirmative(console.input(question)):
+                    if flow == "delete":
+                        removed = delete_item(match, confirmed=True)
+                        outcome = (
+                            f"Deleted {match.item_type}: {match.title}"
+                            if removed
+                            else "Nothing was deleted."
+                        )
+                    else:
+                        updated = reschedule_item(match, new_time, confirmed=True)
+                        outcome = (
+                            f"Moved {match.item_type}: {match.title} to "
+                            f"{new_time.strftime('%Y-%m-%d %H:%M')}"
+                            if updated is not None
+                            else "Nothing was changed."
+                        )
+                    console.print(f"[bold green]{outcome}[/bold green]")
+                else:
+                    outcome = "Cancelled. Nothing was changed."
+                    console.print(f"[bold yellow]{outcome}[/bold yellow]")
                 conversation.record_outcome(outcome)
                 continue
 

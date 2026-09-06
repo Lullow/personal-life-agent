@@ -62,6 +62,23 @@ def _timestamp_range(
     return clauses, params
 
 
+def _delete_row(table: str, row_id: str | int, db_path: str | None = None) -> bool:
+    """Delete one row by id and report whether it existed.
+
+    *table* is never user-supplied — callers pass one of the four literals
+    below, so this cannot become an injection point.
+    """
+    if table not in {"tasks", "events", "activities", "reminders"}:
+        raise ValueError(f"unknown table: {table}")
+    conn = get_connection(db_path)
+    try:
+        cursor = conn.execute(f"DELETE FROM {table} WHERE id = ?", (row_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
 def _where(clauses: list[str]) -> str:
     return (" WHERE " + " AND ".join(clauses)) if clauses else ""
 
@@ -181,6 +198,29 @@ def update_task_status(
 # Event repository
 # ---------------------------------------------------------------------------
 
+def update_task_due_date(
+    task_id: str,
+    due_date: date | None,
+    db_path: str | None = None,
+) -> Task | None:
+    """Change a task's due date and return the updated row."""
+    conn = get_connection(db_path)
+    try:
+        conn.execute(
+            "UPDATE tasks SET due_date = ?, updated_at = ? WHERE id = ?",
+            (_iso(due_date), _iso(datetime.now()), task_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return get_task(task_id, db_path)
+
+
+def delete_task(task_id: str, db_path: str | None = None) -> bool:
+    """Delete a task; return whether a row was removed."""
+    return _delete_row("tasks", task_id, db_path)
+
+
 def _row_to_event(row: sqlite3.Row) -> CalendarEvent:
     return CalendarEvent(
         id=row["id"],
@@ -247,6 +287,42 @@ def list_events(
 # ---------------------------------------------------------------------------
 # Activity repository
 # ---------------------------------------------------------------------------
+
+def get_event(event_id: str, db_path: str | None = None) -> CalendarEvent | None:
+    """Fetch a single event by id, or *None* if not found."""
+    conn = get_connection(db_path)
+    try:
+        row = conn.execute(
+            "SELECT * FROM events WHERE id = ?", (event_id,)
+        ).fetchone()
+        return _row_to_event(row) if row else None
+    finally:
+        conn.close()
+
+
+def update_event_time(
+    event_id: str,
+    start_time: datetime,
+    end_time: datetime | None = None,
+    db_path: str | None = None,
+) -> CalendarEvent | None:
+    """Move an event to a new start (and optional end) time."""
+    conn = get_connection(db_path)
+    try:
+        conn.execute(
+            "UPDATE events SET start_time = ?, end_time = ? WHERE id = ?",
+            (_iso(start_time), _iso(end_time), event_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return get_event(event_id, db_path)
+
+
+def delete_event(event_id: str, db_path: str | None = None) -> bool:
+    """Delete an event; return whether a row was removed."""
+    return _delete_row("events", event_id, db_path)
+
 
 def _row_to_activity(row: sqlite3.Row) -> ActivityLog:
     return ActivityLog(
@@ -358,6 +434,29 @@ def update_activity_status(
 # Reminder repository
 # ---------------------------------------------------------------------------
 
+def update_activity_time(
+    activity_id: str,
+    logged_at: datetime,
+    db_path: str | None = None,
+) -> ActivityLog | None:
+    """Move an activity to a new point in time."""
+    conn = get_connection(db_path)
+    try:
+        conn.execute(
+            "UPDATE activities SET logged_at = ? WHERE id = ?",
+            (_iso(logged_at), activity_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return get_activity(activity_id, db_path)
+
+
+def delete_activity(activity_id: str, db_path: str | None = None) -> bool:
+    """Delete an activity; return whether a row was removed."""
+    return _delete_row("activities", activity_id, db_path)
+
+
 def _row_to_reminder(row: sqlite3.Row) -> Reminder:
     return Reminder(
         id=row["id"],
@@ -436,6 +535,29 @@ def get_reminder(reminder_id: int, db_path: str | None = None) -> Reminder | Non
         return _row_to_reminder(row) if row else None
     finally:
         conn.close()
+
+
+def update_reminder_time(
+    reminder_id: int,
+    remind_at: datetime,
+    db_path: str | None = None,
+) -> Reminder | None:
+    """Move a reminder to a new time."""
+    conn = get_connection(db_path)
+    try:
+        conn.execute(
+            "UPDATE reminders SET remind_at = ? WHERE id = ?",
+            (_iso(remind_at), reminder_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return get_reminder(reminder_id, db_path)
+
+
+def delete_reminder(reminder_id: int, db_path: str | None = None) -> bool:
+    """Delete a reminder; return whether a row was removed."""
+    return _delete_row("reminders", reminder_id, db_path)
 
 
 def update_reminder_status(

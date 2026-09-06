@@ -13,9 +13,11 @@ from pathlib import Path
 import pytest
 
 from life_agent.agent.conversation import (
+    AMBIGUOUS_TEXT,
     BAD_ARGUMENTS_TEXT,
     BAD_DATE_TEXT,
     LLM_UNAVAILABLE_TEXT,
+    NOT_FOUND_TEXT,
     ConversationAgent,
 )
 from life_agent.db.repositories import list_activities, list_events, list_tasks
@@ -416,3 +418,179 @@ class TestDateReadTools:
 
         assert turn.kind == "display"
         assert "2026-03-01 -> 2026-03-31" in turn.text
+
+
+# ---------------------------------------------------------------------------
+# Answering from retrieved data (the second call on a read)
+# ---------------------------------------------------------------------------
+
+
+class TestReadAnswers:
+    def test_the_answer_replaces_the_lead_in(self, db_path):
+        from datetime import datetime
+
+        _plan_activity(db_path, "Träna rygg", datetime(2026, 9, 7, 10, 0))
+        client = FakeLLMClient(
+            payloads=[
+                {
+                    "tool": "list_day",
+                    "arguments": {"date": "2026-09-07"},
+                    "reply": "Jag kollar imorgon åt dig.",
+                },
+                {"reply": "Du tränar rygg kl 10:00."},
+            ]
+        )
+        agent = ConversationAgent(
+            llm_client=client, db_path=db_path, reference_date=REF
+        )
+
+        turn = agent.send("när ska jag träna imorgon?")
+
+        assert turn.kind == "display"
+        assert turn.reply == "Du tränar rygg kl 10:00."
+        assert "Träna rygg" in turn.text
+
+    def test_the_retrieved_data_is_handed_to_the_model(self, db_path):
+        from datetime import datetime
+
+        _plan_activity(db_path, "Träna rygg", datetime(2026, 9, 7, 10, 0))
+        client = FakeLLMClient(
+            payloads=[
+                {"tool": "list_day", "arguments": {"date": "2026-09-07"}, "reply": "Kollar."},
+                {"reply": "Kl 10."},
+            ]
+        )
+        ConversationAgent(
+            llm_client=client, db_path=db_path, reference_date=REF
+        ).send("när tränar jag?")
+
+        assert len(client.calls) == 2
+        assert "Träna rygg" in client.calls[1][-1]["content"]
+        assert "READ" not in client.system_prompts[0]
+
+    def test_a_failed_second_call_keeps_the_lead_in(self, db_path):
+        client = FakeLLMClient(
+            payloads=[
+                {"tool": "list_day", "arguments": {"date": "2026-09-07"}, "reply": "Kollar."}
+            ]
+        )
+        agent = ConversationAgent(
+            llm_client=client, db_path=db_path, reference_date=REF
+        )
+
+        turn = agent.send("vad har jag imorgon?")
+
+        assert turn.kind == "display"
+        assert turn.reply == "Kollar."
+
+
+# ---------------------------------------------------------------------------
+# Changing and removing saved items
+# ---------------------------------------------------------------------------
+
+
+def _save_event(db_path, title, when):
+    from life_agent.db.repositories import create_event
+    from life_agent.models import CalendarEvent
+
+    create_event(CalendarEvent(title=title, start_time=when), db_path)
+
+
+class TestEditFlows:
+    def test_delete_resolves_to_one_row_and_asks(self, db_path):
+        from datetime import datetime
+
+        _save_event(db_path, "Lämna grabben på förskolan", datetime(2026, 9, 7, 9, 30))
+        payload = {
+            "tool": "delete_item",
+            "arguments": {"title": "grabben", "item_type": "event"},
+            "reply": "Jag tar bort den.",
+        }
+
+        turn = _agent(payload, db_path=db_path).send("ta bort lämningen")
+
+        assert turn.kind == "needs_confirmation"
+        assert turn.data["flow"] == "delete"
+        assert turn.data["match"].title == "Lämna grabben på förskolan"
+        assert turn.decision.action_type == "delete"
+        assert turn.decision.requires_confirmation is True
+
+    def test_nothing_is_removed_by_the_proposal_itself(self, db_path):
+        from datetime import datetime
+
+        from life_agent.db.repositories import list_events
+
+        _save_event(db_path, "Lämna grabben", datetime(2026, 9, 7, 9, 30))
+        payload = {
+            "tool": "delete_item",
+            "arguments": {"title": "grabben"},
+            "reply": "Jag tar bort den.",
+        }
+
+        _agent(payload, db_path=db_path).send("ta bort lämningen")
+
+        assert len(list_events(db_path)) == 1
+
+    def test_an_unmatched_description_says_so(self, db_path):
+        payload = {
+            "tool": "delete_item",
+            "arguments": {"title": "tandläkaren"},
+            "reply": "Jag tar bort den.",
+        }
+
+        turn = _agent(payload, db_path=db_path).send("ta bort tandläkaren")
+
+        assert turn.kind == "reply"
+        assert turn.reply == NOT_FOUND_TEXT
+        assert turn.decision.tool_name is None
+
+    def test_several_matches_are_listed_for_the_user_to_pick(self, db_path):
+        from datetime import datetime
+
+        _save_event(db_path, "Träna rygg", datetime(2026, 9, 7, 10, 0))
+        _save_event(db_path, "Träna biceps", datetime(2026, 9, 9, 11, 0))
+        payload = {
+            "tool": "delete_item",
+            "arguments": {"title": "träna"},
+            "reply": "Jag tar bort den.",
+        }
+
+        turn = _agent(payload, db_path=db_path).send("ta bort träningen")
+
+        assert turn.kind == "reply"
+        assert turn.reply == AMBIGUOUS_TEXT
+        assert "Träna rygg" in turn.text
+        assert "Träna biceps" in turn.text
+
+    def test_reschedule_carries_the_new_time(self, db_path):
+        from datetime import datetime
+
+        _save_event(db_path, "Lämna grabben", datetime(2026, 9, 7, 9, 30))
+        payload = {
+            "tool": "reschedule_item",
+            "arguments": {"title": "grabben", "new_time": "2026-09-07T08:45:00"},
+            "reply": "Jag flyttar den.",
+        }
+
+        turn = _agent(payload, db_path=db_path).send("flytta lämningen till 08:45")
+
+        assert turn.kind == "needs_confirmation"
+        assert turn.data["flow"] == "reschedule"
+        assert turn.data["new_time"] == datetime(2026, 9, 7, 8, 45)
+        assert turn.decision.action_type == "update"
+        assert turn.decision.requires_confirmation is True
+
+    def test_reschedule_without_a_usable_time_asks(self, db_path):
+        from datetime import datetime
+
+        _save_event(db_path, "Lämna grabben", datetime(2026, 9, 7, 9, 30))
+        payload = {
+            "tool": "reschedule_item",
+            "arguments": {"title": "grabben", "new_time": "kvart i nio"},
+            "reply": "",
+        }
+
+        turn = _agent(payload, db_path=db_path).send("flytta lämningen")
+
+        assert turn.kind == "reply"
+        assert turn.reply == BAD_DATE_TEXT

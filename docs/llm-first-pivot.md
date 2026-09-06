@@ -90,6 +90,15 @@ Single call rather than classify-then-respond: two calls double latency and
 cost, and latency is the scarce resource once the model runs on your own
 machine.
 
+**Amended 2026-09-06.** Read turns take a second call after all. The reply is
+written in the same JSON as the tool call, so on a read it is composed before
+any data exists — the agent could fetch but never look at what it fetched.
+"När ska jag lämna grabben?" returned the whole day, and "hur mycket har jag
+tränat?" returned a month for the user to count themselves. The second call
+hands the retrieved rows back and asks for an answer, and the raw data is still
+printed underneath. Writes are untouched, so the extra call is paid only where
+it buys something.
+
 ### Trust is structural, not prompted
 
 The model's `reply` is never the last word about a write. After a save the CLI
@@ -222,7 +231,12 @@ machine with credentials configured tests identically to one without.
 
 Everything below waits until the spike succeeds:
 
-- date-range parameters on the repositories, and registered read tools
+- ~~date-range parameters on the repositories, and registered read tools~~ —
+  done 2026-09-06. `list_day` and `list_range` replaced `list_today` and
+  `list_week` in the agent's tool set: a tool that assumes a day is how
+  "imorgon" got answered with today's schedule. `reschedule_item` and
+  `delete_item` followed, because a database that can only grow fills with
+  duplicates of the things you got wrong the first time.
 - a `facts` table for what does not fit the four tables — preferences, family
   routines, household observations
 - family agenda, meals, local events, AI news

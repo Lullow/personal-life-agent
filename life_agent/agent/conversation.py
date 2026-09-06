@@ -24,12 +24,16 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Literal, Protocol
 
 from life_agent.agent.decisions import AgentDecision
 from life_agent.agent.policy import validate_decision_safety
-from life_agent.agent.prompts import AGENT_SYSTEM_PROMPT_TEMPLATE, AGENT_TOOL_NAMES
+from life_agent.agent.prompts import (
+    AGENT_SYSTEM_PROMPT_TEMPLATE,
+    AGENT_TOOL_NAMES,
+    READ_ANSWER_SYSTEM_PROMPT,
+)
 from life_agent.agent.tools import ToolRegistry, build_default_tool_registry
 from life_agent.schemas.confirmation import ConfirmationProposal
 from life_agent.schemas.extraction import ExtractionResult
@@ -46,6 +50,11 @@ LLM_UNAVAILABLE_TEXT = (
 )
 BAD_ARGUMENTS_TEXT = "I got that a bit wrong — could you say it once more?"
 BAD_DATE_TEXT = "Which date did you mean?"
+NOT_FOUND_TEXT = "I could not find anything saved that matches that."
+AMBIGUOUS_TEXT = "That matches more than one saved item — which did you mean?"
+
+# How much retrieved data to hand back to the model when it answers a read.
+MAX_DATA_CHARS = 4000
 
 # Read tools that take no arguments.  Anything date-shaped goes through
 # list_day / list_range instead, so the agent always names the day it means.
@@ -61,6 +70,16 @@ def _parse_date_argument(value: Any) -> date | None:
         return None
     try:
         return date.fromisoformat(value.strip()[:10])
+    except ValueError:
+        return None
+
+
+def _parse_datetime_argument(value: Any) -> datetime | None:
+    """Read an ISO timestamp out of a model-supplied argument, or ``None``."""
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value.strip())
     except ValueError:
         return None
 
@@ -266,15 +285,19 @@ class ConversationAgent:
             )
 
         if tool.name in _READ_HANDLERS:
-            return AgentTurn(
-                kind="display", reply=reply, decision=decision, text=self._dispatch_read(tool.name)
-            )
+            return self._display(decision, reply, self._dispatch_read(tool.name), message)
 
         if tool.name == "list_day":
-            return self._dispatch_day(decision, arguments, reply)
+            return self._dispatch_day(decision, arguments, reply, message)
 
         if tool.name == "list_range":
-            return self._dispatch_range(decision, arguments, reply)
+            return self._dispatch_range(decision, arguments, reply, message)
+
+        if tool.name == "reschedule_item":
+            return self._propose_edit(decision, arguments, reply, "reschedule")
+
+        if tool.name == "delete_item":
+            return self._propose_edit(decision, arguments, reply, "delete")
 
         if tool.name == "save_extracted_items":
             return self._propose_save(decision, arguments, reply)
@@ -291,8 +314,99 @@ class ConversationAgent:
         handler = getattr(chat_service, _READ_HANDLERS[tool_name])
         return handler(db_path=self._db_path)
 
+    def _display(
+        self, decision: AgentDecision, reply: str, text: str, question: str
+    ) -> AgentTurn:
+        """Return a read result, with the model's answer grounded in it.
+
+        The first call wrote its reply before any data existed, so it can only
+        be a lead-in.  A second call — on reads only — lets the model actually
+        answer the question that was asked.  If it fails, the lead-in stands
+        and the data below is unaffected.
+        """
+        answer = self._answer_from_data(question, decision.tool_name or "", text)
+        return AgentTurn(
+            kind="display", reply=answer or reply, decision=decision, text=text
+        )
+
+    def _answer_from_data(self, question: str, tool_name: str, data: str) -> str | None:
+        client = self._get_client()
+        if client is None:
+            return None
+        messages = [
+            *self._history,
+            {"role": "user", "content": question},
+            {
+                "role": "user",
+                "content": f"Data from {tool_name}:\n{data[:MAX_DATA_CHARS]}",
+            },
+        ]
+        try:
+            payload = client.chat_json(READ_ANSWER_SYSTEM_PROMPT, messages)
+        except Exception:
+            log.debug("Read-answer call failed; keeping the lead-in", exc_info=True)
+            return None
+        if not isinstance(payload, dict):
+            return None
+        answer = str(payload.get("reply") or "").strip()
+        return answer or None
+
+    def _propose_edit(
+        self,
+        decision: AgentDecision,
+        arguments: dict[str, Any],
+        reply: str,
+        flow: str,
+    ) -> AgentTurn:
+        """Resolve what the model described to exactly one saved row, or ask."""
+        from life_agent.services.edit_service import ITEM_TYPES, find_items
+
+        new_time: datetime | None = None
+        if flow == "reschedule":
+            new_time = _parse_datetime_argument(arguments.get("new_time"))
+            if new_time is None:
+                return AgentTurn(
+                    kind="reply",
+                    reply=reply or BAD_DATE_TEXT,
+                    decision=_no_tool_decision("missing_time", reply),
+                )
+
+        item_type = arguments.get("item_type")
+        if item_type not in ITEM_TYPES:
+            item_type = None
+
+        matches = find_items(
+            title=arguments.get("title") if isinstance(arguments.get("title"), str) else None,
+            item_type=item_type,
+            day=_parse_date_argument(arguments.get("date")),
+            db_path=self._db_path,
+        )
+
+        if not matches:
+            return AgentTurn(
+                kind="reply",
+                reply=NOT_FOUND_TEXT,
+                decision=_no_tool_decision("no_match", reply),
+            )
+
+        if len(matches) > 1:
+            listing = "\n".join(f"  - {m.describe()}" for m in matches[:10])
+            return AgentTurn(
+                kind="reply",
+                reply=AMBIGUOUS_TEXT,
+                decision=_no_tool_decision("ambiguous_match", reply),
+                text=listing,
+            )
+
+        return AgentTurn(
+            kind="needs_confirmation",
+            reply=reply,
+            decision=decision,
+            data={"flow": flow, "match": matches[0], "new_time": new_time},
+        )
+
     def _dispatch_day(
-        self, decision: AgentDecision, arguments: dict[str, Any], reply: str
+        self, decision: AgentDecision, arguments: dict[str, Any], reply: str, message: str
     ) -> AgentTurn:
         from life_agent.services.chat_service import get_day_response
 
@@ -304,15 +418,12 @@ class ConversationAgent:
                 reply=reply or BAD_DATE_TEXT,
                 decision=_no_tool_decision("missing_date", reply),
             )
-        return AgentTurn(
-            kind="display",
-            reply=reply,
-            decision=decision,
-            text=get_day_response(day, db_path=self._db_path),
+        return self._display(
+            decision, reply, get_day_response(day, db_path=self._db_path), message
         )
 
     def _dispatch_range(
-        self, decision: AgentDecision, arguments: dict[str, Any], reply: str
+        self, decision: AgentDecision, arguments: dict[str, Any], reply: str, message: str
     ) -> AgentTurn:
         from life_agent.services.chat_service import get_range_response
 
@@ -327,11 +438,8 @@ class ConversationAgent:
             )
         if end < start:
             start, end = end, start
-        return AgentTurn(
-            kind="display",
-            reply=reply,
-            decision=decision,
-            text=get_range_response(start, end, db_path=self._db_path),
+        return self._display(
+            decision, reply, get_range_response(start, end, db_path=self._db_path), message
         )
 
     def _propose_save(

@@ -228,6 +228,14 @@ Available tools:
   senaste veckan".
 - "list_deadlines" — upcoming task deadlines.
 - "list_reminders" — pending reminders.
+- "reschedule_item" — move something already saved to a new time.
+  Arguments: {{"title": <words from the saved title>, "item_type":
+  "task"|"event"|"activity"|"reminder" or null, "date": "YYYY-MM-DD" or null
+  to narrow it down, "new_time": "YYYY-MM-DDTHH:MM:SS"}}.
+- "delete_item" — remove something already saved.  Same arguments minus
+  "new_time".  The application finds the row, shows it, and asks the user
+  before anything is removed, so describe what they meant rather than
+  hesitating; if it matches several things they get to pick.
 - "complete_activity" — the user says they finished a planned activity
   ("jag har tränat klart").  Arguments: {{"text": <the user's message>}}.
   This too is only a proposal: congratulate them and ask, do not report it done.
@@ -288,8 +296,34 @@ AGENT_TOOL_NAMES: tuple[str, ...] = (
     "save_extracted_items",
     "list_day",
     "list_range",
+    "reschedule_item",
+    "delete_item",
     "list_deadlines",
     "list_reminders",
     "complete_activity",
     "ask_clarifying_question",
 )
+
+
+# ---------------------------------------------------------------------------
+# Second call on a read — answering from what the tool actually returned
+# ---------------------------------------------------------------------------
+
+READ_ANSWER_SYSTEM_PROMPT = """\
+You asked the application for the user's saved data and it came back.  Answer
+their question from that data and nothing else.
+
+Respond with valid JSON ONLY — no prose outside it, no markdown fences:
+
+{"reply": str}
+
+Rules:
+- Answer the question that was actually asked.  "När ska jag lämna grabben"
+  wants a time; "hur mycket har jag tränat" wants a count or a total.
+- Use only what is in the data.  If the answer is not in there, say so plainly
+  — never fall back on what you remember from earlier in the conversation, and
+  never guess at a time that is not written down.
+- The user sees the data printed underneath your answer, so do not read it back
+  line by line.  One or two sentences.
+- Reply in the language the user wrote in.
+"""
