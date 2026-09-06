@@ -227,13 +227,16 @@ class ConversationAgent:
         return self._recall("")
 
     def record_outcome(self, text: str) -> None:
-        """Add what actually happened to the memory.
+        """Remember what actually happened, as a fact rather than a remark.
 
         The caller uses this after a save so the next turn is grounded in the
-        real outcome rather than in what the model claimed it did.
+        real outcome rather than in what the model claimed it did.  It is
+        written as ``kind="outcome"``, which every strategy must carry through
+        consolidation verbatim — this is the database having the last word, and
+        a summary that paraphrases it has broken something load-bearing.
         """
         if text and text.strip():
-            self._append("assistant", text.strip())
+            self._append("assistant", text.strip(), kind="outcome")
 
     def end_session(self) -> None:
         """Tell the memory the conversation is over; it may consolidate."""
