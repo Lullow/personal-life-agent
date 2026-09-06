@@ -72,6 +72,11 @@ inclusive day bounds (`start`/`end`, or `due_from`/`due_to` for tasks).
 > Natural language input must not write to the database without explicit
 > user confirmation.
 
+The memory layer is not an exception to this rule. It persists natural
+language to its own store, which is not the database the rule protects —
+memory has no write path to domain tables and is read-only into the prompt.
+See "Memory layer" below.
+
 Enforced in code, not convention, at three independent layers:
 
 1. `AgentDecision.requires_confirmation` must be `True` for any mutating
@@ -92,6 +97,10 @@ message → ConversationAgent.send()          life_agent/agent/conversation.py
   history (10 turns) + system prompt → one call → {"tool", "arguments", "reply"}
   → ToolRegistry lookup → AgentDecision → AgentPolicy → dispatch → AgentTurn
 ```
+
+`history (10 turns)` is being replaced by the memory Protocol — see
+"Memory layer" below. Both call sites that build a message list from the
+buffer become `retrieve(...)`.
 
 Four things matter and are easy to break:
 
@@ -147,3 +156,98 @@ file read by a small stdlib parser. A real environment variable always wins, and
 
 Model choice matters more than it looks: a weak model misclassifies and claims
 saves that did not happen. There is a measured comparison in the pivot doc.
+
+
+## Memory layer
+
+Status: active refactor, weeks 1–5. Steps 1–3 are behaviour-preserving.
+
+### What we are doing
+
+The conversation memory is being extracted from `ConversationAgent` into a
+swappable module behind a Protocol. The goal is to compare three memory
+strategies against each other in a measured evaluation (LongMemEval). The
+comparison is the project; the agent is the consumer.
+
+This means: **the interface is the contract.** If a change makes it harder to
+swap the backend with one config line, the change is wrong, however clean it
+looks.
+
+### The interface
+
+`life_agent/agent/memory.py`
+
+```python
+@dataclass(frozen=True)
+class MemoryRecord:
+    role: Literal["user", "assistant"]
+    content: str
+    kind: Literal["message", "outcome"]
+    at: datetime
+    session_id: str
+
+@dataclass(frozen=True)
+class Retrieval:
+    messages: list[dict[str, str]]
+    sources: list[str]        # record ids that contributed
+    tokens_used: int
+
+class ConversationMemory(Protocol):
+    def write(self, record: MemoryRecord) -> None: ...
+    def retrieve(self, query: str, *, at: datetime,
+                 budget_tokens: int) -> Retrieval: ...
+    def end_session(self) -> None: ...
+```
+
+Three implementations, in this order:
+
+1. `RecentTurnsMemory` — current behaviour. Baseline.
+2. `RetrievalMemory` — top-k over everything. Has no way to overwrite stale
+   facts. **This is intentional** — it is what the baseline should fail at.
+3. `ConsolidatingMemory` — rolling summary plus a recent window.
+
+### Rules that hold across all implementations
+
+**Time cutoff.** `retrieve(at=T)` must never surface records with `at > T`. The
+evaluation replays histories step by step and asks what the memory should
+believe at a point in time. A leak here silently invalidates every number.
+
+**Outcomes survive.** A record with `kind="outcome"` is a fact read out of the
+domain database, not a model utterance. It is preserved verbatim and is never
+dropped, summarised, or paraphrased during consolidation. The database gets the
+last word — that is load-bearing, not a detail.
+
+**The strategy owns consolidation.** The agent never calls consolidation
+directly. `write()` decides for itself whether it needs to consolidate;
+`end_session()` marks the session boundary. If the agent triggers it, we are
+comparing strategies under one policy instead of comparing the policies.
+
+**Budgets are in tokens.** Not characters. Cost is a reported metric, and
+characters-per-token differ between dense summaries and verbose raw turns —
+especially in Swedish, where compounds tokenize badly.
+
+### Boundaries
+
+Memory persistence writes to its own store. **Never** through
+`db/repositories.py`, never to a domain table. Memory is read-only into the
+prompt and has no write path into domain data.
+
+`ConsolidatingMemory` makes an additional LLM call, outside the turn. That call must never be able to
+produce a tool call — same discipline `READ_ANSWER_SYSTEM_PROMPT` already has.
+
+Tests are offline (`tests/conftest.py` neutralises `.env`). Any embedding-based
+retrieval needs a deterministic fake embedder behind the same Protocol.
+
+### Out of scope
+
+Do not change `prompts.py` to suit the benchmark. This restriction is about
+benchmark-driven changes only — prompt fixes for agent behaviour still belong
+there, as described above.
+
+The agent is a Swedish household planner that is deliberately forbidden from
+answering from memory — it looks things up. LongMemEval measures an English
+assistant answering from memory. These are different jobs.
+
+The evaluation therefore runs **headless**: `evals/longmemeval.py` drives the
+memory module through a thin harness, not through `ConversationAgent.send()`.
+The agent never appears in the measured path.
