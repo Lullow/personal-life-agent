@@ -6,14 +6,14 @@ the Python standard library (``urllib``).  It is also intentionally *safe by
 default*:
 
 * If the provider is not fully configured (missing base URL, API key, or
-  model), the client is **disabled** and ``extract_structured`` returns
-  ``None`` so the caller falls back to the deterministic extractor.
+  model), the client is **disabled** and ``chat_json`` returns ``None`` so the
+  caller can say so rather than crash.
 * Any network/parse error results in ``None`` rather than an exception, so a
-  flaky provider can never crash the app.
+  flaky provider can never take the application down.
 
-The client only returns parsed JSON.  Validation against the
-``ExtractionResult`` schema happens one layer up, and nothing is ever written
-to the database here.
+The client only returns parsed JSON.  What that JSON is allowed to mean is
+decided one layer up by the tool registry, and nothing is ever written to the
+database here.
 """
 
 import json
@@ -93,48 +93,6 @@ class LLMClient:
             provider=s.llm_provider,
         )
 
-    def extract_structured(
-        self,
-        system_prompt: str,
-        user_text: str,
-    ) -> dict | None:
-        """Return a parsed JSON dict from the LLM, or ``None`` if unavailable.
-
-        Never raises: a disabled client, network failure, or unparseable
-        response all yield ``None`` so the caller can fall back safely.
-        """
-        if not self.enabled:
-            return None
-        try:
-            content = self._chat_completion(system_prompt, user_text, json_mode=True)
-        except Exception:
-            return None
-        return _extract_json(content)
-
-    def generate_text(
-        self,
-        system_prompt: str,
-        user_text: str,
-    ) -> str | None:
-        """Return a plain-text response from the LLM, or ``None``.
-
-        Unlike :meth:`extract_structured` this does **not** request JSON mode
-        and returns the raw assistant message.  Intended for conversational
-        responses where no structured parsing is needed.
-
-        Never raises: a disabled client, network failure, or empty response
-        all yield ``None``.
-        """
-        if not self.enabled:
-            return None
-        try:
-            content = self._chat_completion(system_prompt, user_text, json_mode=False)
-        except Exception:
-            return None
-        if not content or not content.strip():
-            return None
-        return content.strip()
-
     def chat_json(
         self,
         system_prompt: str,
@@ -162,21 +120,6 @@ class LLMClient:
         return _extract_json(content)
 
     # -- low-level transport (separated so tests can monkeypatch it) --------
-
-    def _chat_completion(
-        self, system_prompt: str, user_text: str, *, json_mode: bool
-    ) -> str | None:
-        """Call the chat-completions endpoint and return the message content.
-
-        *json_mode* selects between deterministic JSON-object output (used by
-        :meth:`extract_structured`) and free-form text (used by
-        :meth:`generate_text`).
-        """
-        return self._chat_completion_messages(
-            system_prompt,
-            [{"role": "user", "content": user_text}],
-            json_mode=json_mode,
-        )
 
     def _chat_completion_messages(
         self,

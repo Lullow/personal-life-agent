@@ -326,9 +326,9 @@ class ConversationAgent:
         return AgentTurn(kind="reply", reply=reply, decision=decision)
 
     def _dispatch_read(self, tool_name: str) -> str:
-        from life_agent.services import chat_service
+        from life_agent.services import read_service
 
-        handler = getattr(chat_service, _READ_HANDLERS[tool_name])
+        handler = getattr(read_service, _READ_HANDLERS[tool_name])
         return handler(db_path=self._db_path)
 
     def _display(
@@ -425,7 +425,7 @@ class ConversationAgent:
     def _dispatch_day(
         self, decision: AgentDecision, arguments: dict[str, Any], reply: str, message: str
     ) -> AgentTurn:
-        from life_agent.services.chat_service import get_day_response
+        from life_agent.services.read_service import get_day_response
 
         day = _parse_date_argument(arguments.get("date"))
         if day is None:
@@ -442,7 +442,7 @@ class ConversationAgent:
     def _dispatch_range(
         self, decision: AgentDecision, arguments: dict[str, Any], reply: str, message: str
     ) -> AgentTurn:
-        from life_agent.services.chat_service import get_range_response
+        from life_agent.services.read_service import get_range_response
 
         start = _parse_date_argument(arguments.get("from"))
         end = _parse_date_argument(arguments.get("to"))

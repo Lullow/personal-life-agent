@@ -1,8 +1,7 @@
 """Tests for the OpenAI-compatible LLM client wrapper.
 
-These tests never make a real network call: the low-level ``_chat_completion``
-(or ``_post``) is monkeypatched so we exercise enable/disable logic and JSON
-parsing only.
+These tests never make a real network call: the low-level transport is
+monkeypatched so we exercise enable/disable logic and JSON parsing only.
 """
 
 import pytest
@@ -25,10 +24,9 @@ def _clear_llm_env(monkeypatch):
         monkeypatch.delenv(var, raising=False)
 
 
-VALID_JSON = (
-    '{"tasks": [], "events": [], "activities": [], '
-    '"reminders": [], "questions": [], "confidence": 0.9}'
-)
+VALID_JSON = '{"tool": "list_day", "arguments": {"date": "2026-09-07"}, "reply": "Kollar."}'
+
+MESSAGES = [{"role": "user", "content": "vad har jag imorgon?"}]
 
 
 def _enabled_client() -> LLMClient:
@@ -43,7 +41,7 @@ def _enabled_client() -> LLMClient:
 def test_client_disabled_without_configuration():
     client = LLMClient()
     assert client.enabled is False
-    assert client.extract_structured("sys", "hello") is None
+    assert client.chat_json("sys", MESSAGES) is None
 
 
 def test_client_enabled_when_fully_configured():
@@ -73,55 +71,54 @@ def test_from_settings_disabled_without_keys():
 
 
 # ---------------------------------------------------------------------------
-# extract_structured behaviour
+# chat_json behaviour
 # ---------------------------------------------------------------------------
 
 
-def test_extract_structured_parses_valid_json(monkeypatch):
+def test_chat_json_parses_valid_json(monkeypatch):
     client = _enabled_client()
-    monkeypatch.setattr(client, "_chat_completion", lambda s, u, **kw: VALID_JSON)
-    data = client.extract_structured("sys", "user")
-    assert isinstance(data, dict)
-    assert data["confidence"] == 0.9
-    assert data["tasks"] == []
+    monkeypatch.setattr(client, "_chat_completion_messages", lambda s, m, **kw: VALID_JSON)
+    data = client.chat_json("sys", MESSAGES)
+    assert data["tool"] == "list_day"
+    assert data["arguments"]["date"] == "2026-09-07"
 
 
-def test_extract_structured_strips_code_fences(monkeypatch):
+def test_chat_json_strips_code_fences(monkeypatch):
     client = _enabled_client()
     fenced = "```json\n" + VALID_JSON + "\n```"
-    monkeypatch.setattr(client, "_chat_completion", lambda s, u, **kw: fenced)
-    data = client.extract_structured("sys", "user")
-    assert isinstance(data, dict)
-    assert data["confidence"] == 0.9
+    monkeypatch.setattr(client, "_chat_completion_messages", lambda s, m, **kw: fenced)
+    assert client.chat_json("sys", MESSAGES)["tool"] == "list_day"
 
 
-def test_extract_structured_invalid_json_returns_none(monkeypatch):
+def test_chat_json_invalid_json_returns_none(monkeypatch):
     client = _enabled_client()
-    monkeypatch.setattr(client, "_chat_completion", lambda s, u, **kw: "not json at all")
-    assert client.extract_structured("sys", "user") is None
+    monkeypatch.setattr(
+        client, "_chat_completion_messages", lambda s, m, **kw: "not json at all"
+    )
+    assert client.chat_json("sys", MESSAGES) is None
 
 
-def test_extract_structured_network_error_returns_none(monkeypatch):
+def test_chat_json_network_error_returns_none(monkeypatch):
     client = _enabled_client()
 
-    def boom(system_prompt, user_text, **kwargs):
+    def boom(system_prompt, messages, **kwargs):
         raise RuntimeError("network down")
 
-    monkeypatch.setattr(client, "_chat_completion", boom)
-    assert client.extract_structured("sys", "user") is None
+    monkeypatch.setattr(client, "_chat_completion_messages", boom)
+    assert client.chat_json("sys", MESSAGES) is None
 
 
-def test_extract_structured_disabled_short_circuits(monkeypatch):
+def test_chat_json_disabled_short_circuits(monkeypatch):
     client = LLMClient()  # disabled
 
     def fail(*args, **kwargs):  # pragma: no cover - must not be called
         raise AssertionError("disabled client must not call the network")
 
-    monkeypatch.setattr(client, "_chat_completion", fail)
-    assert client.extract_structured("sys", "user") is None
+    monkeypatch.setattr(client, "_chat_completion_messages", fail)
+    assert client.chat_json("sys", MESSAGES) is None
 
 
-def test_chat_completion_reads_message_content(monkeypatch):
+def test_the_conversation_is_sent_after_the_system_prompt(monkeypatch):
     client = _enabled_client()
     captured: dict = {}
 
@@ -131,11 +128,19 @@ def test_chat_completion_reads_message_content(monkeypatch):
         return {"choices": [{"message": {"content": VALID_JSON}}]}
 
     monkeypatch.setattr(client, "_post", fake_post)
-    content = client._chat_completion("sys", "user", json_mode=True)
-    assert content == VALID_JSON
+    history = [
+        {"role": "user", "content": "vad har jag idag?"},
+        {"role": "assistant", "content": "Inget."},
+        {"role": "user", "content": "och imorgon då?"},
+    ]
+    assert client.chat_json("sys", history)["tool"] == "list_day"
+
+    sent = captured["payload"]["messages"]
+    assert sent[0] == {"role": "system", "content": "sys"}
+    assert sent[1:] == history
     assert captured["url"].endswith("/chat/completions")
-    assert captured["payload"]["model"] == "m"
     assert captured["payload"]["response_format"] == {"type": "json_object"}
+    assert captured["payload"]["temperature"] == 0
 
 
 # ---------------------------------------------------------------------------

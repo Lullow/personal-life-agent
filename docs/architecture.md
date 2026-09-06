@@ -22,17 +22,18 @@ Supporting modules sit alongside these layers:
 - **Models** (`life_agent/models/`) — Pydantic domain objects and shared enums.
 - **Schemas** (`life_agent/schemas/`) — structured input/output shapes for
   extraction, planning, and confirmation.
-- **Agent** (`life_agent/agent/`) — AgentDecision schema, ToolRegistry,
-  AgentPolicy, AgentRouter, AgentRuntime, LLM prompt text, and the safety rule.
-  See [agent-architecture.md](agent-architecture.md) for a full walkthrough.
-- **LLM** (`life_agent/llm/`) — an optional OpenAI-compatible client (stdlib
-  only) and JSON-to-schema parsing.
+- **Agent** (`life_agent/agent/`) — the conversation loop, AgentDecision schema,
+  ToolRegistry, AgentPolicy, prompt text, and the safety rule. See
+  [agent-architecture.md](agent-architecture.md) for a full walkthrough.
+- **LLM** (`life_agent/llm/`) — a dependency-free OpenAI-compatible client
+  (stdlib only) and JSON parsing.
 
 ## CLI layer (`life_agent/cli/`)
 
 - `commands.py` registers every Typer command (`init`, `add-task`, `today`,
-  `extract`, `add`, `complete`, `chat`, …). Commands are thin: they parse
-  arguments, call a service, and print results.
+  `complete`, `chat`, …). Commands are thin: they parse arguments, call a
+  service, and print results. `chat` is the agent loop and is where the
+  confirmation prompts live.
 - `formatters.py` turns models, agendas, extraction results, and proposals into
   readable terminal text. Keeping formatting here means services stay free of
   presentation concerns.
@@ -49,13 +50,14 @@ The services are the orchestration layer between the CLI and the database:
 - `planner_service.py` — **read-only**. Builds the `today`, `week`, and
   `deadlines` views by loading tasks/events and sorting/grouping them. It never
   writes.
-- `extraction_service.py` — converts free text into an `ExtractionResult`.
 - `confirmation_service.py` — builds a proposal from an `ExtractionResult` and,
-  only when confirmed, persists each item via the services above.
-- `completion_service.py` — detects a completion phrase, finds the relevant
-  planned activity, and (when confirmed) marks it completed.
-- `chat_service.py` — deterministic intent classifier and response helpers for
-  interactive chat mode (see [Chat mode](#chat-mode)).
+  only when confirmed, persists each item via the services above. The
+  `ExtractionResult` is filled in by the model rather than by a parser.
+- `completion_service.py` — finds the planned activity a completion phrase
+  refers to and, when confirmed, marks it completed.
+- `edit_service.py` — resolves a description of a saved item to actual rows, and
+  reschedules or deletes one after confirmation.
+- `read_service.py` — renders the read-only views the agent can ask for.
 
 ## Repository / database layer (`life_agent/db/`)
 
@@ -89,40 +91,29 @@ The distinction matters: **models** are persisted domain records; **schemas**
 are transient shapes used at the boundaries (LLM output, planner output,
 confirmation previews).
 
-## Extraction service
+## Turning language into items
 
-`extract_from_text(text, reference_date=None, llm_client=None, mode=None)`
-chooses an extraction strategy and always returns an `ExtractionResult`:
+There is no parser. `ExtractionResult` — the same schema the confirmation flow
+has always consumed — is filled in by the model as the `arguments` of the
+`save_extracted_items` tool, and validated with Pydantic before anything is
+proposed. Arguments that do not validate become a request to rephrase, not a
+save.
 
-1. **Mode selection.** An explicit `llm_client` (used in tests) forces LLM mode;
-   otherwise the `mode` argument or `Settings.extraction_mode` decides. The
-   default is `deterministic`, so the app works offline with no API key.
-2. **LLM mode.** The configured `LLMClient.from_settings()` sends the system
-   prompt plus a date-aware user prompt to an OpenAI-compatible
-   `/chat/completions` endpoint and requests JSON only. The response is parsed
-   and validated with `safe_parse_extraction_result`. If the client is disabled
-   (missing base URL/API key/model), unreachable, or returns invalid JSON, the
-   service **degrades to the deterministic extractor** and adds a short note to
-   `questions` — it never raises.
-3. **Deterministic mode.** A rule-based extractor recognises Swedish/English
-   patterns: clock times (`kl 12`, `13:30`, `klockan 18`), relative dates and
-   weekdays (`idag`, `imorgon`, `på fredag`), durations (`1h`, `45 min`),
-   reminder triggers (`påminn`), task intent (`behöver`, `måste`, `kom ihåg`),
-   event keywords (`möte`, `tandläkare`) with `på <Plats>` locations, and
-   activity verbs (`träna`/`gymma` → gym).
-4. Unclear or missing details become entries in `questions` rather than guesses,
-   and `confidence` reflects how much was extracted.
+Everything the deterministic extractor used to do with regexes for clock times,
+weekdays, durations and locations is now the model's job, and the rules it works
+to live in `life_agent/agent/prompts.py`. See
+[llm-first-pivot.md](llm-first-pivot.md) for why that trade was made and what it
+cost.
 
 The `LLMClient` is deliberately isolated and dependency-free (Python stdlib
-`urllib`), so swapping providers — or installing the project without any LLM —
-never affects the CLI, services, or database. Extraction is always
-**read-only**; saving still goes through the confirmation flow below.
+`urllib`), so swapping providers — including to a local model — never affects
+the CLI, services, or database.
 
 ## Confirmation flow
 
-The natural language `add` command never saves silently:
+Language never saves silently:
 
-1. `extract_from_text` produces an `ExtractionResult`.
+1. The model produces an `ExtractionResult` as tool arguments.
 2. `build_confirmation_proposal` counts how many items are complete enough to
    save versus incomplete — without touching the database.
 3. The CLI prints the proposal and asks `Save this? [y/N]`.
@@ -159,54 +150,29 @@ The `complete` command marks a previously planned activity as done:
   `complete_activity` call it first, so the guarantee cannot be bypassed by
   accident.
 
-## Chat mode and agent runtime
+## Chat mode
 
-`python -m life_agent chat` starts a simple interactive loop.  Messages flow
-through a structured agent pipeline:
+`python -m life_agent chat` is the agent. One model call per message decides
+which tool to use, the registry decides what that tool is allowed to do, and
+mutating tools stop at a confirmation prompt in the CLI. Questions about saved
+data take a second call so the answer is grounded in the rows that came back.
 
-```
-CLI chat loop
-  └─► ChatService.classify_intent()
-        └─► AgentRouter.route()  (deterministic by default, optional LLM)
-              └─► AgentDecision  →  AgentPolicy check
-                    └─► AgentRuntime dispatches to services
-```
-
-The runtime returns one of three response kinds:
-
-- `"display"` — read-only result, printed immediately.
-- `"needs_confirmation"` — the CLI shows a proposal and asks the user before
-  writing anything.
-- `"unknown"` — helpful fallback with examples.
-
-| Chat intent | Example phrases | Behaviour |
-|---|---|---|
-| `/help` | `/help`, `help` | Print available commands |
-| `/quit` | `/quit`, `/exit` | Exit the loop |
-| TODAY | "vad har jag idag", "dagens plan" | Show today's agenda (read-only) |
-| WEEK | "vad händer i veckan", "veckoplan" | Show week view (read-only) |
-| DEADLINES | "visa deadlines" | Show upcoming deadlines (read-only) |
-| REMINDERS | "visa påminnelser", "mina reminders" | Show pending reminders (read-only) |
-| QUERY_SAVED_DATA | "vilken tid påminner du mig om X" | Answer from saved records (read-only) |
-| ADD_ITEMS | "jag ska träna…", "påminn mig…" | Extract, show proposal, ask `Save this? [y/N]` |
-| COMPLETE | "jag har tränat klart" | Find planned activity, ask `Mark as completed? [y/N]` |
-| UNKNOWN | anything else | Helpful fallback with examples |
-
-The chat service has no long-term memory: each message is classified and handled
-independently.  For a full description of the agent components see
+The full walkthrough, the tool table, and the degradation matrix are in
 [agent-architecture.md](agent-architecture.md).
 
 ## Why small layers
 
 - **Testability** — each layer can be tested in isolation with a temporary
-  database, which is why the suite is fast and deterministic.
-- **Incremental delivery** — every feature (models → DB → CLI → planner →
-  extraction → confirmation → completion) was added as a focused layer without
-  rewriting earlier ones.
+  database and a faked model, which is why the suite is fast and deterministic
+  even though the product is not.
+- **Incremental delivery** — every feature was added as a focused layer without
+  rewriting earlier ones. It also survived the reversal: when the deterministic
+  language layer was removed, the domain core underneath it did not move.
 - **Safety** — keeping persistence behind services and a single safety helper
   makes the "no write without confirmation" guarantee easy to enforce and audit.
-- **Pluggable LLM** — because extraction returns a schema and the LLM client is
-  isolated behind one interface, the optional OpenAI-compatible provider plugs
-  in (and falls back) without changing the CLI, services, or database.
-- **Extensible agent runtime** — new tools are registered in `ToolRegistry` and
-  routed by `AgentRouter` without touching the CLI or database layers.
+- **Pluggable LLM** — the client speaks only the OpenAI-compatible protocol
+  behind one interface, so moving to a different provider, or to a model running
+  on your own machine, is a base-URL change.
+- **Extensible agent** — a new capability is a `ToolDefinition` in the registry,
+  a dispatch branch, and a paragraph of prompt. Its action type and confirmation
+  requirement are declared in one place and enforced everywhere.

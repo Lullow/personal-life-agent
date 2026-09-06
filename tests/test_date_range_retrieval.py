@@ -21,7 +21,7 @@ from life_agent.db.repositories import (
 from life_agent.db.schema import init_db
 from life_agent.models import ActivityLog, CalendarEvent, Task
 from life_agent.models.common import ActivityStatus, ActivityType
-from life_agent.services.chat_service import get_day_response, get_range_response
+from life_agent.services.read_service import get_day_response, get_range_response
 from life_agent.services.planner_service import get_day_agenda, get_range_agenda
 
 MARCH = date(2026, 3, 15)

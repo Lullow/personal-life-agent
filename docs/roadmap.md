@@ -2,9 +2,9 @@
 
 This document lists **future features** only.  The current system covers local
 task/event/activity/reminder management, planner views (`today`, `week`,
-`deadlines`), confirmed natural language input (`extract`, `add`, `complete`),
-an interactive chat mode, and a structured agent runtime with optional LLM
-routing and a read-only saved-data Q&A tool.
+`deadlines`), and a conversational agent that plans, answers questions about
+saved data, reschedules, deletes, and completes — always behind an explicit
+confirmation.
 
 See [architecture.md](architecture.md) and
 [agent-architecture.md](agent-architecture.md) for how the current system is
@@ -13,25 +13,18 @@ layers.
 
 ## Planned features
 
-### Agent runtime and routing
+### The agent
 
-- **Richer LLM routing** — improve the LLM routing prompt and decision parsing
-  so the router handles more ambiguous phrases confidently.
-- **Structured query result layer** — replace the ad-hoc string answers in
-  `query_saved_data` with typed result objects that can be formatted
-  consistently across chat, CLI, and a future web UI.
-- **Response generation from grounded data** — use the LLM to compose
-  human-readable summaries of query results rather than template strings, while
-  keeping the data retrieval deterministic.
-- **Better memory and preferences** — let the agent remember user preferences
-  (e.g. preferred workout time, recurring errands) across sessions.
-
-### Language and extraction
-
-- **Better Swedish date/time parsing** — the extractor already covers relative
-  dates (`idag`, `imorgon`), weekdays (`på måndag` … `på söndag`), times
-  (`kl 9`, `kl 09:00`, `klockan 18`, bare `13:30`), and durations. Future work:
-  date ranges, "om X dagar/veckor", part-of-day windows, and recurring phrasing.
+- **A `facts` table** — one generic table with free text, a category, and a
+  timestamp, for what does not fit the four typed tables: preferences, family
+  routines, household observations. Not four more typed models; you cannot
+  enumerate in advance what a household wants remembered.
+- **A day and a time that are separate fields** — the schema cannot express
+  "tomorrow, time unknown" for an activity, so the agent has to ask for a clock
+  time it does not need.
+- **A local model** — `LLMClient` speaks only the OpenAI-compatible protocol, so
+  this is a base-URL change plus a model good enough to be trusted with it. It
+  restores the privacy properties the project started with.
 
 ### Reminders and planning
 

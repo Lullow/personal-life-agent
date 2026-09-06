@@ -175,7 +175,7 @@ class TestToolValidation:
         assert turn.decision.tool_name is None
         assert turn.decision.is_mutating is False
 
-    def test_registered_but_out_of_scope_tool_is_not_dispatched(self, db_path):
+    def test_a_tool_name_that_only_sounds_plausible_is_rejected(self, db_path):
         payload = {"tool": "query_saved_data", "arguments": {}, "reply": "hm"}
         turn = _agent(payload, db_path=db_path).send("vad har jag sparat")
 
@@ -199,8 +199,8 @@ class TestToolValidation:
         assert turn.decision.requires_confirmation is False
         assert "reminders" in turn.text.lower()
 
-    def test_a_day_assuming_tool_is_out_of_scope(self, db_path):
-        """list_today is registered for the old chat path, not for the agent."""
+    def test_a_day_assuming_tool_does_not_exist(self, db_path):
+        """A tool that picks the day for you is how "imorgon" got today's plan."""
         payload = {"tool": "list_today", "arguments": {}, "reply": "Här är idag."}
         turn = _agent(payload, db_path=db_path).send("vad har jag idag")
 

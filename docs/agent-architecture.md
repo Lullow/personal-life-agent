@@ -1,283 +1,129 @@
 # Agent Architecture
 
-This document explains the agent runtime that sits between the chat loop and the
-service layer in Personal Life Agent.  The runtime was added after the initial
-MVP to give the chat mode a structured, testable classification pipeline instead
-of ad-hoc keyword checks.
+The agent is one model call per message, plus a second call when the message
+was a question about saved data. Everything that decides what may happen is
+code. See [llm-first-pivot.md](llm-first-pivot.md) for why it is built this way
+and what it replaced.
 
-Everything described here is fully implemented.  No cloud infrastructure,
-background process, or external AI service is required.
-
----
-
-## High-level flow
+## The loop
 
 ```
-User input
+your message
   │
-  ▼
-CLI chat loop (commands.py)
-  │  /help and /quit are handled here before anything else
+  ├─ ConversationAgent.send()                    life_agent/agent/conversation.py
+  │     history (last 10 turns) + system prompt
+  │     └─► one call ──► {"tool": …, "arguments": {…}, "reply": "…"}
   │
-  ▼
-ChatService.classify_intent()
-  │  maps the message to a ChatIntent by delegating to AgentRouter
+  ├─ ToolRegistry.get(tool)                      unknown name → rejected, answered as chat
+  ├─ AgentDecision built from the REGISTRY       action_type, requires_confirmation
+  ├─ AgentPolicy.validate_decision_safety()      belt and braces
   │
-  ▼
-AgentRouter.route()
-  │  classifies the message into an AgentDecision
-  │  ├─ deterministic mode  (default)  — regex patterns, no network call
-  │  └─ llm mode  (optional)  ─────── tries LLM first, falls back to deterministic
-  │
-  ▼
-AgentDecision
-  │  a structured value: intent, tool_name, action_type, requires_confirmation, …
-  │
-  ▼
-AgentPolicy.validate_decision_safety()
-  │  rejects unknown tools and unsafe write decisions, never lets an
-  │  unregistered or confirmation-free mutation reach the runtime
-  │
-  ▼
-AgentRuntime.handle_message()
-  │  dispatches based on decision.tool_name
-  │  ├─ read tools  ──► call service immediately, return RuntimeResponse(kind="display")
-  │  ├─ query_saved_data ─► saved_data_query_service, return RuntimeResponse(kind="display")
-  │  ├─ extract_items ──► return RuntimeResponse(kind="needs_confirmation")
-  │  ├─ complete_activity ► return RuntimeResponse(kind="needs_confirmation")
-  │  └─ unknown ──────────► return RuntimeResponse(kind="unknown")
-  │
-  ▼
-Service layer  (planner_service, reminder_service, saved_data_query_service, …)
-  │
-  ▼
-Repository layer  (life_agent/db/repositories.py)
-  │
-  ▼
-SQLite  (data/life_agent.db, local file only)
+  └─ dispatch
+        read   → run it, then a second call to answer from the rows → "display"
+        write  → propose it → "needs_confirmation" → the CLI asks you
+        none   → "reply"
 ```
 
-The chat loop acts on the returned `RuntimeResponse`:
+`AgentTurn` carries the outcome: `kind` is `"reply"`, `"display"`, or
+`"needs_confirmation"`, and the CLI in `life_agent/cli/commands.py` does the
+asking.
 
-- `"display"` — print the text directly, no confirmation needed.
-- `"needs_confirmation"` — show the proposal and ask `Save this? [y/N]` or
-  `Mark this activity as completed? [y/N]` before touching the database.
-- `"unknown"` — show a helpful fallback message with examples.
+## The four guarantees
 
----
+**1. The registry decides what a tool is, not the model.**
 
-## Components
+`action_type` and `requires_confirmation` are read from `ToolRegistry`, never
+from the model's JSON. A model that labels `delete_item` as a harmless read
+changes nothing: the registry says `delete`, and the confirmation prompt
+appears anyway.
 
-### AgentDecision  (`life_agent/agent/decisions.py`)
+**2. A hallucinated tool is a failed lookup.**
 
-An `AgentDecision` is the normalised output of every routing step.  It is a
-Pydantic model with these fields:
+The model never executes anything. It names a tool, and an unknown name simply
+does not resolve — the turn degrades to conversation and the reply still
+reaches you.
 
-| Field | Type | Purpose |
-|---|---|---|
-| `intent` | `str` | Human-readable label for the routing result (e.g. `"show_today"`) |
-| `tool_name` | `str \| None` | Which registered tool handles this decision |
-| `action_type` | `"read" \| "write" \| "update" \| "delete" \| "clarify" \| "unknown"` | Used by policy to determine safety |
-| `requires_confirmation` | `bool` | Whether the caller must ask the user before executing |
-| `arguments` | `dict` | Free-form payload forwarded to the tool (e.g. `{"text": "..."}`) |
-| `confidence` | `float \| None` | 0–1 confidence in the classification; validated at construction |
-| `user_facing_message` | `str \| None` | Optional message the router wants shown to the user |
+**3. The loop never writes.**
 
-`AgentDecision.is_mutating` is a computed property that returns `True` for
-`write`, `update`, and `delete` action types.
+`ConversationAgent` has no write path. Mutating tools return
+`needs_confirmation` with a resolved proposal, and only the CLI, after an
+explicit `y`, calls a service that writes. Those services call
+`assert_confirmed()` first and raise `PermissionError` otherwise.
 
-All mutating decisions must have `requires_confirmation=True` — this is
-enforced by the policy layer, not just by convention.
+**4. What you are told about a write comes from the database.**
 
----
+The line printed after a save is generated from `ConfirmationSaveResult`, and
+after an edit from the resolved row. The model's prose is never the record of
+what happened — it is not trusted to be, and in practice it sometimes miscounts.
 
-### ToolRegistry  (`life_agent/agent/tools.py`)
+## Tools
 
-The `ToolRegistry` is an in-memory catalogue of `ToolDefinition` objects.
-Each `ToolDefinition` carries:
-
-- `name` — unique string identifier.
-- `description` — plain-text explanation used in LLM prompts.
-- `action_type` — read / write / update / delete / clarify.
-- `requires_confirmation` — boolean enforced by policy.
-- `handler_name` — the function the runtime will call.
-
-`build_default_tool_registry()` populates the registry with all current tools
-(see [Current tools](#current-tools)).  The router and policy both receive the
-same default registry, so an unregistered tool name can never slip through to
-the runtime.
-
----
-
-### AgentPolicy  (`life_agent/agent/policy.py`)
-
-`validate_decision_safety(decision, registry)` enforces two rules:
-
-1. **Unknown action type** (`"unknown"`) is always unsafe — the router returns
-   a clarify decision instead.
-2. **Mutating actions** (`write`, `update`, `delete`) must have
-   `requires_confirmation=True`; if an LLM returns a mutating decision without
-   this flag, the router rejects it and falls back to deterministic routing.
-3. **Unregistered tool** — if `decision.tool_name` is not in the registry the
-   decision is rejected.
-
-`requires_confirmation(action_type)` is a pure helper that returns `True` for
-`write`, `update`, and `delete`.
-
----
-
-### AgentRouter  (`life_agent/agent/router.py`)
-
-`AgentRouter.route(message) -> AgentDecision` is the main classification entry
-point.  It operates in one of two modes (controlled by
-`LIFE_AGENT_AGENT_ROUTER_MODE` env var, default `deterministic`):
-
-#### Deterministic mode (default)
-
-Pattern-matching in pure Python — no network call, no external dependency,
-works fully offline.
-
-Priority order inside `_route_deterministic`:
-
-1. **Saved-data question patterns** (`_QUERY_PATTERNS`) — checked first to
-   prevent question phrases from matching broader list patterns.
-2. **Today / week / deadline / reminder list patterns** — phrases like
-   "vad har jag idag" or "visa veckan".
-3. **Completion phrases** — "jag har tränat klart", "träningen är klar".
-4. **Planning / creation markers** — "jag ska", "påminn mig", "behöver",
-   "måste", etc.
-5. **Fallback** — unknown action, prompts the user for clarification.
-
-#### LLM mode (optional)
-
-Set `LIFE_AGENT_AGENT_ROUTER_MODE=llm`.  The router sends the message to the
-configured LLM (same `LLMClient` used by the extraction service) with a
-structured routing prompt, then:
-
-1. Parses the JSON response into an `AgentDecision`.
-2. Validates the decision against `AgentPolicy` and `ToolRegistry`.
-3. **Falls back to deterministic routing** if the LLM is unavailable, returns
-   invalid JSON, names an unknown tool, or produces an unsafe decision.
-
-The fallback is unconditional: the runtime never receives a decision that has
-not passed both the policy check and the tool registry lookup.
-
----
-
-### AgentRuntime  (`life_agent/agent/runtime.py`)
-
-`AgentRuntime.handle_message(message) -> RuntimeResponse` is the thin
-dispatcher layer.
-
-It calls `AgentRouter.route(message)`, inspects `decision.tool_name`, and
-returns a `RuntimeResponse` without touching the database:
-
-| `tool_name` | `RuntimeResponse.kind` | What happens |
-|---|---|---|
-| `list_today` | `"display"` | Calls `planner_service.get_today_agenda()` |
-| `list_week` | `"display"` | Calls `planner_service.get_week_agenda()` |
-| `list_deadlines` | `"display"` | Calls `planner_service.get_upcoming_deadlines()` |
-| `list_reminders` | `"display"` | Calls `reminder_service.list_reminders()` |
-| `query_saved_data` | `"display"` | Calls `saved_data_query_service.answer_saved_data_question()` |
-| `extract_items` | `"needs_confirmation"` | Returns; the chat loop handles extraction + `Save this?` |
-| `complete_activity` | `"needs_confirmation"` | Returns; the chat loop handles completion + `Mark as completed?` |
-| anything else | `"unknown"` | Returns the fallback message |
-
-The runtime itself never writes to the database.
-
----
-
-## Current tools
-
-| Tool | Action type | Confirmation required | Description |
+| Tool | Action | Confirms | Arguments |
 |---|---|---|---|
-| `list_today` | read | no | Show today's agenda |
-| `list_week` | read | no | Show this week's agenda |
-| `list_deadlines` | read | no | Show upcoming task deadlines |
-| `list_reminders` | read | no | Show pending reminders |
-| `list_activities` | read | no | Show logged activities |
-| `extract_items` | read | no | Parse planning text into a structured preview (never saves) |
-| `query_saved_data` | read | no | Answer questions about existing saved data (reminders, tasks, events, activities) |
-| `ask_clarifying_question` | clarify | no | Return a clarification prompt to the user |
-| `save_extracted_items` | write | **yes** | Persist an extraction result (only after user confirms) |
-| `complete_activity` | update | **yes** | Mark a planned activity as completed (only after user confirms) |
+| `list_day` | read | no | `date` |
+| `list_range` | read | no | `from`, `to` |
+| `list_deadlines` | read | no | — |
+| `list_reminders` | read | no | — |
+| `save_extracted_items` | write | **yes** | `tasks`, `events`, `activities`, `reminders` |
+| `complete_activity` | update | **yes** | `text` |
+| `reschedule_item` | update | **yes** | `title`, `item_type`, `date`, `new_time` |
+| `delete_item` | delete | **yes** | `title`, `item_type`, `date` |
+| `ask_clarifying_question` | clarify | no | — |
 
-`save_extracted_items` is never selected directly by the router — it is reached
-only through the confirmation flow inside the CLI after the user answers `y`.
+There is deliberately **no tool that assumes a day**. `list_today` and
+`list_week` used to exist, and while they did, "vad har jag imorgon?" kept being
+answered with today's schedule. The agent must always name the date it means.
 
----
+## Why reads take a second call
 
-## Read vs write/update actions
+The reply is written in the same JSON as the tool call, so on a read it is
+composed *before* any data exists. The model could fetch but never look. That
+produced answers like "du har inget planerat" about a day it had not seen, and
+whole-month dumps in response to "hur mycket har jag tränat?".
 
-**Read-only tools** can run immediately:
+So a read turn calls again: the retrieved text is handed back with
+`READ_ANSWER_SYSTEM_PROMPT`, and the model answers the actual question. The
+rows are still printed underneath, so you can check it. If the second call
+fails, the first reply stands and the data is unaffected.
 
-- `list_today`, `list_week`, `list_deadlines`, `list_reminders`
-- `list_activities`
-- `extract_items` (produces a preview; does not persist anything)
-- `query_saved_data` (reads existing records; never writes)
-- `ask_clarifying_question` (returns text only)
+Writes take one call. The extra cost is paid only where it buys something.
 
-**Write and update tools** require explicit user confirmation:
+## How editing resolves without ids
 
-- `save_extracted_items` — the user must answer `y` or `yes` to
-  `Save this? [y/N]` before any record is created.
-- `complete_activity` — the user must answer `y` or `yes` to
-  `Mark this activity as completed? [y/N]` before the status is updated.
+The model never sees a database id. For `reschedule_item` and `delete_item` it
+describes what the user meant — some words from the title, optionally a kind and
+a day — and `life_agent/services/edit_service.py` resolves that to rows:
 
-This rule is enforced at three independent layers:
+- Word matching compares **openings**, not substrings: the agent says
+  "ryggpasset" and "lämningen" where the titles read "Träna rygg" and "Lämna
+  grabben". Four shared leading characters bridge Swedish inflection without a
+  stemmer.
+- The kind and the day are treated as guesses. If narrowing by them finds
+  nothing, they are dropped rather than reporting a findable row as missing.
+- Only the best-scoring group survives, so a clear description resolves to one
+  row and a vague one comes back as a list to choose from.
+- An empty description matches nothing. Removing "everything" is not something
+  the agent gets to propose.
 
-1. `AgentDecision.requires_confirmation` must be `True` for all mutating decisions.
-2. `AgentPolicy.validate_decision_safety` rejects mutating decisions that lack
-   the flag.
-3. `life_agent/agent/safety.py` — `assert_confirmed(confirmed)` raises
-   `PermissionError` inside `save_confirmed_extraction` and `complete_activity`
-   if they are reached without an explicit confirmation flag.
+The resolved row is always shown before you confirm, so a wrong match is caught
+by a person.
 
----
+## Degradation
 
-## Saved-data Q&A (`query_saved_data`)
+Every failure lands somewhere sane, and none of them writes:
 
-`query_saved_data` is a read-only tool that answers simple questions about
-records that already exist in the database.  It is handled by
-`life_agent/services/saved_data_query_service.py`.
-
-The service classifies the question into one of three patterns:
-
-| Pattern | Example | What it does |
-|---|---|---|
-| Reminder lookup | "vilken tid ska du påminna mig om att handla mat" | Searches pending reminders for a matching title keyword |
-| Planned tomorrow | "har jag något planerat imorgon" | Lists events, tasks, activities, and reminders for tomorrow |
-| Training this week | "vad har jag för träningar den här veckan" | Lists gym activities within the current week |
-
-If nothing matches or no records are found the service returns a clear "nothing
-found" message.  The service never writes or modifies records.
-
----
-
-## Why tools are separated from the LLM
-
-The LLM (when enabled) acts only as a **classifier** — it picks a tool name and
-fills in arguments.  It never calls tools directly.  Benefits:
-
-- The same tool definitions are used in deterministic mode, so adding a new
-  tool automatically exposes it to both routing paths.
-- The `ToolRegistry` and `AgentPolicy` validate every decision before the
-  runtime sees it, so a hallucinated or unsafe LLM output is rejected the same
-  way an invalid deterministic decision would be.
-- Tests use a `FakeLLMClient` that returns pre-written JSON — no real API key
-  is needed and tests are deterministic.
-- Disabling the LLM (or running without one) degrades gracefully: the
-  deterministic router handles everything.
-
----
-
-## Safety summary
-
-| Principle | How it is enforced |
+| Failure | Result |
 |---|---|
-| Local-first storage | All data is in a local SQLite file; no cloud database |
-| No write without confirmation | `AgentPolicy`, `AgentDecision.requires_confirmation`, `assert_confirmed()` |
-| LLM output is validated | `AgentPolicy` checks every LLM decision; invalid output triggers fallback |
-| Unknown decisions are safe | Unregistered tools and unknown action types always fall back to `"unknown"` |
-| Deterministic fallback | Available in all modes; LLM mode falls back to it on any failure |
-| Extraction is read-only | `extract` command and `extract_items` tool never persist anything |
+| No model configured, or unreachable | A message saying so |
+| Response is not JSON | Same |
+| Tool name unknown | Answered as conversation, tool ignored |
+| Arguments are not a valid `ExtractionResult` | Asks you to rephrase |
+| Date argument will not parse | Asks which date, rather than assuming today |
+| Nothing matches a description | Says so |
+| Several things match | Lists them and asks |
+| Second read call fails | The lead-in reply stands, data still printed |
+
+The model also sometimes answers `{"delete_item": {…}}` instead of
+`{"tool": "delete_item", "arguments": {…}}` — the right intent in the wrong
+envelope. That is accepted when the key names a real tool, because the registry
+still decides what the name is allowed to do.

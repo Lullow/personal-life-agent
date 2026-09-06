@@ -46,20 +46,6 @@ class ToolRegistry:
 
 _DEFAULT_TOOLS: list[ToolDefinition] = [
     ToolDefinition(
-        name="list_today",
-        description="Show today's schedule",
-        action_type="read",
-        requires_confirmation=False,
-        handler_name="get_today_response",
-    ),
-    ToolDefinition(
-        name="list_week",
-        description="Show this week's schedule",
-        action_type="read",
-        requires_confirmation=False,
-        handler_name="get_week_response",
-    ),
-    ToolDefinition(
         name="list_day",
         description="Show the schedule for one specific date",
         action_type="read",
@@ -86,20 +72,6 @@ _DEFAULT_TOOLS: list[ToolDefinition] = [
         action_type="read",
         requires_confirmation=False,
         handler_name="get_reminders_response",
-    ),
-    ToolDefinition(
-        name="list_activities",
-        description="Show logged activities",
-        action_type="read",
-        requires_confirmation=False,
-        handler_name="get_activities_response",
-    ),
-    ToolDefinition(
-        name="extract_items",
-        description="Extract tasks/events/activities/reminders from text",
-        action_type="read",
-        requires_confirmation=False,
-        handler_name="extract",
     ),
     ToolDefinition(
         name="save_extracted_items",
@@ -135,13 +107,6 @@ _DEFAULT_TOOLS: list[ToolDefinition] = [
         action_type="clarify",
         requires_confirmation=False,
         handler_name="ask_clarification",
-    ),
-    ToolDefinition(
-        name="query_saved_data",
-        description="Answer read-only questions about saved reminders, tasks, events, and activities",
-        action_type="read",
-        requires_confirmation=False,
-        handler_name="answer_saved_data_question",
     ),
 ]
 

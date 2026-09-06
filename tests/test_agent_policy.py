@@ -90,9 +90,9 @@ class TestValidateDecisionSafety:
     def test_registered_tool_is_safe(self):
         reg = build_default_tool_registry()
         d = AgentDecision(
-            intent="show today",
+            intent="show one day",
             action_type="read",
-            tool_name="list_today",
+            tool_name="list_day",
         )
         safe, reason = validate_decision_safety(d, registry=reg)
         assert safe is True

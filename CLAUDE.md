@@ -1,17 +1,19 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with
+code in this repository.
 
 ## What this is
 
-A local-first terminal assistant (Typer CLI) for tasks, calendar events,
-activities, and reminders, with optional natural language input in Swedish or
-English. Data is stored in a local SQLite file (`data/life_agent.db`). No
-accounts, no cloud storage. Natural language understanding defaults to a
-deterministic offline extractor; an OpenAI-compatible LLM can optionally be
-enabled via config for extraction, chat routing, saved-data responses, and
-free-form conversation fallback — every LLM path degrades gracefully to a
-deterministic fallback on any failure.
+A conversational terminal assistant (Typer CLI) for tasks, calendar events,
+activities, and reminders, spoken to in Swedish or English. Data lives in a
+local SQLite file (`data/life_agent.db`); there are no accounts and no sync.
+
+The agent is driven by a language model and does not work without one. That is
+a deliberate reversal of how the project started — it used to be a deterministic
+offline extractor with an optional LLM bolted on, and the reasoning behind the
+change is in `docs/llm-first-pivot.md`. Read that before proposing anything that
+adds pattern matching back.
 
 ## Commands
 
@@ -19,17 +21,19 @@ deterministic fallback on any failure.
 # Setup
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
+cp .env.example .env               # fill in LIFE_AGENT_LLM_* — required
 python -m life_agent init          # create the local SQLite database
 
-# Run tests
-pytest                             # or: .venv/bin/python -m pytest
-pytest -v                          # verbose, one line per test
-pytest tests/test_completion_service.py -v   # single file
-pytest tests/test_completion_service.py::test_name -v   # single test
+# Tests — offline, the model is faked
+pytest
+pytest tests/test_conversation_agent.py -v
+pytest tests/test_conversation_agent.py::TestEditFlows -v
 
-# Run the CLI
-python -m life_agent --help
-python -m life_agent chat          # interactive chat loop
+# Eval — calls the real model, costs a few cents, read it with your eyes
+.venv/bin/python evals/agent_eval.py
+
+# Run
+python -m life_agent chat
 ```
 
 There is no lint/format/type-check command configured in this repo (no
@@ -37,122 +41,109 @@ ruff/black/mypy config present) — don't invent one unless asked.
 
 `pyproject.toml` sets `pythonpath = ["."]` for pytest, so tests import
 `life_agent` without an editable install. Tests never touch the real
-`data/life_agent.db`: service/repository tests pass an explicit `db_path`
-into a temp dir, CLI tests set the `DB_PATH` env var to a `tmp_path`. Dates
-like "imorgon" (tomorrow) are made deterministic via an injectable
-`reference_date` parameter on extraction/completion services — use it instead
-of relying on real "now" in tests.
+`data/life_agent.db`: service and repository tests pass an explicit `db_path`
+into a temp dir, CLI tests set `DB_PATH` to a `tmp_path`. `tests/conftest.py`
+neutralises the local `.env`, so a machine with credentials configured tests
+identically to one without. Dates are made deterministic with an injectable
+`reference_date`.
 
 ## Architecture
 
-Layered, each layer depends only on the one beneath it:
+Layered, each layer depending only on the one beneath it:
 
 ```
-CLI (Typer)        life_agent/cli/        — parses args, prompts confirmation, prints output
-Services            life_agent/services/   — business logic; only layer that orchestrates models + repositories
-Repositories/DB     life_agent/db/         — SQLite access; converts rows <-> Pydantic models
+CLI (Typer)         life_agent/cli/        — prompts for confirmation, prints output
+Services            life_agent/services/   — business logic; the only orchestration layer
+Repositories/DB     life_agent/db/         — SQLite access; rows <-> Pydantic models
 SQLite              data/life_agent.db
 ```
 
 Supporting modules: `models/` (persisted domain objects + shared enums),
-`schemas/` (transient shapes for extraction/planner/confirmation
-boundaries — not persisted), `agent/` (chat routing pipeline, see below),
-`llm/` (optional dependency-free OpenAI-compatible client using only
-`urllib`).
+`schemas/` (transient shapes for extraction/planner/confirmation boundaries),
+`agent/` (the conversation loop, see below), `llm/` (dependency-free
+OpenAI-compatible client using only `urllib`).
 
 Every repository function accepts an optional `db_path`, which is how test
-isolation and the `DB_PATH` env var both work.
+isolation and the `DB_PATH` env var both work. The list functions also accept
+inclusive day bounds (`start`/`end`, or `due_from`/`due_to` for tasks).
 
 ### The one safety rule
 
 > Natural language input must not write to the database without explicit
 > user confirmation.
 
-This is enforced in code, not convention, at three independent layers:
+Enforced in code, not convention, at three independent layers:
+
 1. `AgentDecision.requires_confirmation` must be `True` for any mutating
    (`write`/`update`/`delete`) decision.
 2. `AgentPolicy.validate_decision_safety()` (`life_agent/agent/policy.py`)
-   rejects mutating decisions lacking that flag, and rejects any
-   unregistered tool name.
-3. `life_agent/agent/safety.py` — `assert_confirmed()` raises
-   `PermissionError` if `save_confirmed_extraction` or `complete_activity`
-   is ever reached without confirmation. `is_affirmative()` treats only
-   `y/yes/j/ja` as yes; a bare Enter or anything else is a refusal.
+   rejects mutating decisions lacking that flag, and any unregistered tool name.
+3. `life_agent/agent/safety.py` — `assert_confirmed()` raises `PermissionError`
+   if a write is reached without confirmation. `is_affirmative()` treats only
+   `y/yes/j/ja` as yes; a bare Enter is a refusal.
 
-When touching extraction, confirmation, completion, or the agent runtime,
-preserve this chain — a new write-capable tool must be registered with
-`requires_confirmation=True` and routed through the confirmation flow, never
-called directly from the router.
+A new write-capable tool must be registered with `requires_confirmation=True`
+and routed through a confirmation flow, never called from the loop.
 
-### Chat / agent pipeline
-
-`chat` mode routes every message through a structured pipeline instead of ad
-hoc keyword checks:
+### The conversation loop
 
 ```
-CLI chat loop → ChatService.classify_intent() → AgentRouter.route()
-  → AgentDecision → AgentPolicy.validate_decision_safety()
-  → AgentRuntime.handle_message() → RuntimeResponse
+message → ConversationAgent.send()          life_agent/agent/conversation.py
+  history (10 turns) + system prompt → one call → {"tool", "arguments", "reply"}
+  → ToolRegistry lookup → AgentDecision → AgentPolicy → dispatch → AgentTurn
 ```
 
-- **AgentRouter** (`agent/router.py`) classifies text into an
-  `AgentDecision`. Deterministic mode (default) is pure regex/pattern
-  matching, offline. LLM mode (`LIFE_AGENT_AGENT_ROUTER_MODE=llm`) asks the
-  configured LLM for a JSON decision, then validates it against
-  `AgentPolicy`/`ToolRegistry` and **unconditionally falls back to
-  deterministic routing** on any failure, invalid JSON, unknown tool, or
-  unsafe (unconfirmed mutating) decision.
-- **ToolRegistry** (`agent/tools.py`) is the single source of truth for
-  every tool's `action_type` and `requires_confirmation`; both routing modes
-  read from the same registry, so an unregistered tool can never reach the
-  runtime.
-- **AgentRuntime** (`agent/runtime.py`) dispatches by `tool_name` and never
-  writes to the database itself. It returns one of three `RuntimeResponse`
-  kinds: `"display"` (read-only, print immediately), `"needs_confirmation"`
-  (CLI must ask `y/N` before the write/update proceeds), `"unknown"`
-  (fallback help text).
-- The LLM, when enabled, only ever acts as a **classifier** picking a tool
-  name + arguments — it never calls tools directly, so a hallucinated tool
-  name is caught by the registry lookup rather than executed.
+Four things matter and are easy to break:
+
+- **`action_type` and `requires_confirmation` come from `ToolRegistry`, never
+  from the model's JSON.** This is what stops a write from presenting itself as
+  a read. Do not "trust" the model's own labels for convenience.
+- **The loop never writes.** Mutating tools return `kind="needs_confirmation"`
+  and the CLI asks. `ConversationAgent` has no write path; keep it that way.
+- **The truth line comes from the database.** What is printed after a save is
+  generated from `ConfirmationSaveResult`, never from the model's `reply`. The
+  model does sometimes claim things that did not happen.
+- **Read turns take a second call.** The reply is composed before any data
+  exists, so `_answer_from_data` hands the retrieved rows back and asks the
+  model to answer. If it fails, the lead-in stands.
+
+`AgentTurn.kind` is `"reply"`, `"display"`, or `"needs_confirmation"`.
+
+There is no tool that assumes a day. `list_day` and `list_range` take explicit
+dates; `list_today`/`list_week` were removed because while they existed,
+"imorgon" kept being answered with today's schedule.
 
 Full walkthrough with the tool table: `docs/agent-architecture.md`. Layer
 details: `docs/architecture.md`.
 
-### The LLM-first loop (spike branch only)
+### Editing saved items
 
-`agent/conversation.py` + `python -m life_agent agent` are the reversal of the
-above: one LLM call per message returning `{"tool", "arguments", "reply"}`, no
-pattern matching anywhere. `action_type` and `requires_confirmation` are still
-read from `ToolRegistry`, never from the model's JSON, so the safety chain is
-unchanged. It runs alongside the deterministic `chat` command until it is
-proven; see `docs/llm-first-pivot.md` for what replaces what.
+The model never sees a database id. `reschedule_item` and `delete_item` pass a
+description; `services/edit_service.py` resolves it to rows, comparing word
+*openings* rather than substrings (the agent says "ryggpasset" where the title
+reads "Träna rygg"). Kind and day are treated as guesses and dropped if
+narrowing by them finds nothing. Several matches come back as a list to choose
+from. The resolved row is shown before confirmation.
 
-### Extraction
+### Prompts
 
-`extraction_service.extract_from_text()` always returns an
-`ExtractionResult`, never raises. Mode is deterministic by default; LLM mode
-degrades to the deterministic extractor (with a note in `questions`) on any
-failure — missing config, unreachable endpoint, invalid JSON. Extraction
-itself is always read-only regardless of mode; only the confirmation flow
-(`confirmation_service.py`) persists, and only after explicit user
-confirmation.
+`life_agent/agent/prompts.py` holds both prompts. Most behaviour lives here
+rather than in code, and most fixes belong here — that is the point of the
+pivot. When changing a rule, run `evals/agent_eval.py` and read the replies;
+several rules exist because a specific failure was observed, and a careless
+rewording brings the failure back. In particular: the ban on `T00:00:00`, "save
+only what is new", and "never ask for permission to save".
 
 ### Config
 
-`life_agent/config.py` — `Settings` loaded from env vars (optionally via
-`.env`, see `.env.example`). Key toggles, all default to the safe/offline
-option:
+`life_agent/config.py` — `Settings` from env vars, falling back to a `.env`
+file read by a small stdlib parser. A real environment variable always wins, and
+`.env` is never merged into `os.environ`.
 
-| Var | Default | Values |
+| Var | Default | Notes |
 |---|---|---|
-| `LIFE_AGENT_EXTRACTION_MODE` | `deterministic` | `deterministic` \| `llm` |
-| `LIFE_AGENT_AGENT_ROUTER_MODE` | `deterministic` | `deterministic` \| `llm` |
-| `LIFE_AGENT_SAVED_DATA_RESPONSE_MODE` | `template` | `template` \| `llm` |
-| `LIFE_AGENT_CONVERSATION_MODE` | `off` | `off` \| `on` |
-| `LIFE_AGENT_LLM_BASE_URL` / `_API_KEY` / `_MODEL` | unset | any OpenAI-compatible endpoint |
+| `DB_PATH` | `data/life_agent.db` | |
+| `LIFE_AGENT_LLM_BASE_URL` / `_API_KEY` / `_MODEL` | unset | **Required** |
 
-`LLMClient` (`life_agent/llm/client.py`) is enabled only when base URL, API
-key, and model are all present; it's built via `LLMClient.from_settings()`
-and used identically by extraction, routing, saved-data responses, and
-conversation fallback. It's dependency-free (stdlib `urllib` only) so
-installing the project never pulls in a provider SDK.
+Model choice matters more than it looks: a weak model misclassifies and claims
+saves that did not happen. There is a measured comparison in the pivot doc.

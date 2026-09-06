@@ -1,38 +1,78 @@
 # Personal Life Agent
 
-A **local-first terminal assistant** for managing the small, recurring parts of
-daily life — tasks, calendar events, activities, and reminders — with optional
-natural language input in Swedish or English.
+A conversational terminal assistant for the small, recurring parts of daily
+life — tasks, calendar events, activities, and reminders. You talk to it in
+Swedish or English, and it works out what you meant.
 
-Everything runs on your machine by default. There are no accounts, and your data
-lives in a local SQLite file. Natural language understanding uses a deterministic
-offline extractor out of the box; an **optional** OpenAI-compatible LLM can be
-enabled via configuration if you want it (see [LLM extraction](#optional-llm-extraction)).
+```
+You: Jag har möte på Odenplan kl 12 imorgon, behöver plugga machine learning,
+     handla mat och träna på kvällen.
+Agent: Jag har förberett fyra saker, vill du spara dem?
 
-## What problem it solves
+Proposed to save:
 
-Keeping track of "what do I need to do today, what's coming this week, what did I
-plan to train, and when should I be reminded" usually means juggling several
-apps. This project is a single, fast, keyboard-driven tool that:
+Events:
+  [1] 2026-09-07 12:00 meeting - Möte på Odenplan (Odenplan)
 
-- captures tasks, events, activities, and reminders from the command line,
-- understands short natural language notes like
-  *"Jag ska träna rygg och biceps kl 12 imorgon, träningen ska vara 1h och påminn mig kl 09."*,
-- shows you a daily and weekly agenda, and
-- always asks before saving anything that came from natural language.
+Tasks:
+  [1] - - study  - Plugga machine learning
+  [2] - - errand - Handla mat
 
-## MVP scope
+Activities:
+  [1] - gym - - Träna
 
-This MVP is intentionally focused and runs entirely offline:
+Will save 4 item(s); skipping 0 incomplete item(s).
 
-- Structured CLI commands for tasks, events, activities, and reminders.
-- A planner that builds today / week / deadline views from stored data.
-- A deterministic natural language **extraction** preview (read-only).
-- A natural language **add** command that proposes items and saves them only
-  after explicit confirmation.
-- A natural language **completion** flow to mark a planned activity as done.
+Save this? [y/N]
+```
 
-## Features
+Your data lives in a local SQLite file with no accounts and no sync. The model
+that reads your messages does not: see [docs/privacy.md](docs/privacy.md) for
+exactly what leaves your machine, and how to move to a local model.
+
+## What it does
+
+- **Understands ordinary sentences.** One message can produce several items;
+  the agent sorts them into events, tasks, activities, and reminders itself.
+- **Asks before it writes.** Everything is a proposal until you answer `y`.
+- **Answers questions about what you saved.** "Vad har jag imorgon?", "hur
+  mycket har jag tränat den senaste månaden?" — it fetches the days in question
+  and answers in words.
+- **Remembers the conversation.** "Och imorgon då?" works.
+- **Changes its mind with you.** Move something to another time, or remove it.
+- **Reads a day as a timeline**, in the order the day is lived, rather than as
+  three lists grouped by row type.
+
+## Requirements
+
+- Python 3.11+
+- Linux, or Windows 11 via WSL
+- An OpenAI-compatible API endpoint and key. The agent cannot understand
+  anything without one.
+
+## Installation
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+
+cp .env.example .env      # then fill in the LIFE_AGENT_LLM_* values
+python -m life_agent init # create the local SQLite database
+```
+
+Use a capable model. A weak one misclassifies and will occasionally tell you it
+saved something it did not — there is a side-by-side comparison in
+[docs/llm-first-pivot.md](docs/llm-first-pivot.md).
+
+## Usage
+
+```bash
+python -m life_agent chat
+```
+
+That is the main way in. Everything below is the same data through structured
+commands, for when you would rather type than talk:
 
 | Area | Commands |
 |------|----------|
@@ -42,213 +82,116 @@ This MVP is intentionally focused and runs entirely offline:
 | Activities | `activity`, `activities` |
 | Reminders | `add-reminder`, `reminders`, `dismiss-reminder` |
 | Planner | `today`, `week`, `deadlines` |
-| Natural language | `extract` (preview), `add` (confirm + save), `complete` (confirm + update) |
-| Interactive | `chat` — conversational loop with routing to all of the above |
+| Natural language | `complete` — mark a planned activity done |
+| Interactive | `chat` — the agent |
 
-## What is intentionally not included
+For a full walkthrough see [docs/demo.md](docs/demo.md).
 
-This MVP deliberately leaves out (see [docs/roadmap.md](docs/roadmap.md)):
+## How the agent works
 
-- A bundled LLM dependency — LLM extraction is **optional and opt-in** via
-  config; the default is a fully offline deterministic extractor.
-- Google Calendar or any external integration.
-- Cloud storage or a hosted database.
-- Push, email, or background notifications / schedulers.
-- A web or mobile app, voice input, and partner/family sharing.
+One model call per message, answering with JSON:
 
-## Requirements
-
-- Python 3.11+
-- WSL Ubuntu, Windows 11 (via WSL), or Linux
-
-## Installation (WSL / Linux)
-
-From the project root:
-
-```bash
-# Create and activate a virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
-
-# Install the package (editable)
-pip install -e .
+```json
+{"tool": "list_day", "arguments": {"date": "2026-09-07"}, "reply": "Jag kollar imorgon åt dig."}
 ```
 
-## Usage
+The model chooses; it never executes. Everything that decides what may happen
+lives in code:
 
-```bash
-# First-time setup: create the local SQLite database
-python -m life_agent init
+- **ToolRegistry** (`life_agent/agent/tools.py`) is the single source of truth
+  for each tool's action type and whether it needs confirmation. A hallucinated
+  tool name is a failed lookup, not an execution.
+- **`action_type` and `requires_confirmation` are read from the registry**, not
+  from the model's own JSON, so a write can never present itself as a read.
+- **AgentPolicy** re-checks the assembled decision before anything runs.
+- **The conversation loop never writes.** Mutating tools come back as
+  `needs_confirmation` and the CLI asks you.
+- **What you are told about a write comes from the database**, not from the
+  model's prose. The model may claim whatever it likes; the line after a save is
+  generated from the actual result.
 
-# Inspect available commands
-python -m life_agent --help
+Read questions take a second call: the first reply is composed before any data
+exists, so the retrieved rows are handed back and the model answers from them.
 
-# Tasks
-python -m life_agent add-task "Plugga machine learning" --due 2026-06-15 --priority high --category study
-python -m life_agent tasks
-python -m life_agent done 1
-
-# Events
-python -m life_agent add-event "Möte på Odenplan" --start "2026-06-15 12:00" --location "Odenplan"
-python -m life_agent events
-
-# Activities (manual logs default to "completed")
-python -m life_agent activity "Gym rygg och biceps" --type gym --minutes 50
-python -m life_agent activities
-
-# Reminders
-python -m life_agent add-reminder "Träning" --at "2026-06-15 09:00"
-python -m life_agent reminders
-python -m life_agent dismiss-reminder 1
-
-# Planner
-python -m life_agent today
-python -m life_agent week
-python -m life_agent deadlines
-
-# Natural language
-python -m life_agent extract "Möte på Odenplan kl 14 imorgon"          # read-only preview
-python -m life_agent add "Jag ska träna rygg och biceps kl 12 imorgon, träningen ska vara 1h och påminn mig kl 09."
-python -m life_agent complete "Jag har tränat klart"
-
-# Interactive chat mode
-python -m life_agent chat
-```
-
-In chat mode you can type naturally — "vad har jag idag", plan items, or
-complete activities — and the assistant routes your message to the right
-service.  All the same safety rules apply: write operations always ask for
-confirmation first.
-
-For a full, reproducible walkthrough see [docs/demo.md](docs/demo.md).
-
-## Agent runtime
-
-The interactive `chat` mode is backed by a lightweight agent runtime:
-
-- **AgentRouter** classifies each message into a structured `AgentDecision`
-  using deterministic regex patterns (default, works offline).  An optional LLM
-  routing mode can be enabled via `LIFE_AGENT_AGENT_ROUTER_MODE=llm`; it falls
-  back to the deterministic router automatically on any failure.
-- **AgentPolicy** validates every decision before execution — unknown tools and
-  confirmation-free write decisions are rejected.
-- **AgentRuntime** dispatches read-only tools immediately and returns
-  `"needs_confirmation"` for any write or update action, so the CLI can ask the
-  user before touching the database.
-- **ToolRegistry** catalogues every capability with its action type and
-  confirmation requirement.  The same registry is used by both routing modes.
-- **Saved-data Q&A** — the `query_saved_data` tool answers read-only questions
-  about existing reminders, tasks, events, and activities without any write side
-  effects.
-
-For a detailed walkthrough see [docs/agent-architecture.md](docs/agent-architecture.md).
+Details in [docs/agent-architecture.md](docs/agent-architecture.md); the
+reasoning behind the design, and what it replaced, in
+[docs/llm-first-pivot.md](docs/llm-first-pivot.md).
 
 ## Safety principle
 
 > **Natural language input never writes to the database without explicit confirmation.**
 
-- `extract` is always read-only — it shows a structured preview and saves nothing.
-- `add` and `complete` show a proposal and only persist changes after you answer
-  `y` / `yes`. Pressing Enter or answering `n` / `no` cancels.
-- `chat` mode applies the same rules: planning text asks `Save this? [y/N]`,
-  and completion text asks `Mark this activity as completed? [y/N]`.
-- This rule is enforced in code (`life_agent/agent/safety.py`), not just by
-  convention.
+Enforced in code at three independent layers, not by convention:
 
-## Privacy (local-first)
+1. A mutating `AgentDecision` must carry `requires_confirmation`.
+2. `AgentPolicy.validate_decision_safety()` rejects one that does not, and any
+   unregistered tool name.
+3. `life_agent/agent/safety.py` raises `PermissionError` if a write is reached
+   without confirmation. Only `y`/`yes`/`j`/`ja` counts as yes — a bare Enter
+   is a refusal.
 
-- All data is stored locally in SQLite at `data/life_agent.db` by default.
-- No external APIs are called unless you explicitly enable LLM mode
-  (`LIFE_AGENT_EXTRACTION_MODE=llm`). The default is fully offline.
-- See [docs/privacy.md](docs/privacy.md) for details and a warning about not
-  committing your database file.
+This holds for saving, completing, rescheduling, and deleting alike.
 
 ## Testing
 
 ```bash
-pytest -v
+pytest                          # fast, offline, no model involved
+.venv/bin/python evals/agent_eval.py   # fifteen real sentences, calls the model
 ```
 
-Tests use temporary databases and never touch your real `data/life_agent.db`.
-See [docs/testing.md](docs/testing.md).
+The suite fakes the model and uses temporary databases. The eval calls your
+configured provider for real, costs a few cents, and is meant to be read with
+your own eyes — run it whenever you change the prompt. See
+[docs/testing.md](docs/testing.md).
 
 ## Configuration
 
-Settings are read from environment variables (optionally via a `.env` file —
-copy `.env.example` to `.env`):
+Read from environment variables, or a `.env` file beside the project (copy
+`.env.example`). A real environment variable always wins over the file.
 
-| Variable    | Default               | Description                          |
-|-------------|-----------------------|--------------------------------------|
-| `APP_ENV`   | `development`         | Application environment              |
-| `LOG_LEVEL` | `INFO`                | Logging level                        |
-| `DB_PATH`   | `data/life_agent.db`  | Path to the local SQLite database    |
-| `LIFE_AGENT_EXTRACTION_MODE`   | `deterministic`     | `deterministic` (offline) or `llm`        |
-| `LIFE_AGENT_AGENT_ROUTER_MODE` | `deterministic`     | `deterministic` or `llm` for chat routing |
-| `LIFE_AGENT_LLM_PROVIDER`      | `openai_compatible` | Provider type for LLM mode                |
-| `LIFE_AGENT_LLM_BASE_URL`      | _(unset)_           | OpenAI-compatible base URL                |
-| `LIFE_AGENT_LLM_API_KEY`       | _(unset)_           | API key for the provider                  |
-| `LIFE_AGENT_LLM_MODEL`         | _(unset)_           | Model name to request                     |
+| Variable | Default | Description |
+|---|---|---|
+| `APP_ENV` | `development` | Application environment |
+| `LOG_LEVEL` | `INFO` | Logging level |
+| `DB_PATH` | `data/life_agent.db` | Path to the local SQLite database |
+| `LIFE_AGENT_LLM_PROVIDER` | `openai_compatible` | Provider type |
+| `LIFE_AGENT_LLM_BASE_URL` | _(unset)_ | OpenAI-compatible base URL |
+| `LIFE_AGENT_LLM_API_KEY` | _(unset)_ | API key for the provider |
+| `LIFE_AGENT_LLM_MODEL` | _(unset)_ | Model name to request |
 
-### Optional LLM extraction
-
-By default the app uses a **deterministic, offline** extractor and never makes a
-network call — no API key is required and everything works out of the box.
-
-You can optionally route extraction through any **OpenAI-compatible** API
-(OpenAI, OpenRouter, a local server, …). Enable it by setting:
-
-```bash
-export LIFE_AGENT_EXTRACTION_MODE=llm
-export LIFE_AGENT_LLM_BASE_URL=https://api.openai.com/v1
-export LIFE_AGENT_LLM_API_KEY=sk-your-key-here
-export LIFE_AGENT_LLM_MODEL=gpt-4o-mini
-```
-
-How it behaves safely:
-
-- The LLM is asked for **JSON only**, which is validated against the same
-  `ExtractionResult` schema as the offline extractor.
-- If the provider is unconfigured, unreachable, or returns invalid output, the
-  app **falls back to the deterministic extractor** and prints a short note —
-  it never crashes.
-- `extract` stays **read-only**, and `add` still asks `Save this? [y/N]` before
-  writing anything. LLM output is never saved without validation **and**
-  confirmation.
-- No LLM SDK is bundled; the client uses only the Python standard library, so
-  installing this project never pulls in a provider dependency.
+The last three are required.
 
 ## Project structure
 
 ```
 personal-life-agent/
 ├── life_agent/
-│   ├── cli/             # Typer CLI commands and output formatters
-│   ├── services/        # Task, event, activity, reminder, planner,
-│   │                    #   extraction, confirmation, completion, chat,
-│   │                    #   and saved-data Q&A services
+│   ├── agent/           # The conversation loop, tool registry, policy, safety
+│   ├── cli/             # Typer commands and output formatting
+│   ├── services/        # Planner, confirmation, completion, edit, read views
 │   ├── db/              # SQLite connection, schema, repositories
 │   ├── models/          # Pydantic domain models + shared enums
-│   ├── schemas/         # Extraction / planner / confirmation schemas
-│   ├── agent/           # AgentDecision, ToolRegistry, AgentPolicy,
-│   │                    #   AgentRouter, AgentRuntime, prompts, safety rule
-│   ├── llm/             # Optional OpenAI-compatible client + JSON parsing
-│   ├── config.py        # Environment-based settings
+│   ├── schemas/         # Extraction / planner / confirmation shapes
+│   ├── llm/             # Dependency-free OpenAI-compatible client
+│   ├── config.py        # Settings, including the .env reader
 │   └── main.py          # Typer app entry point
-├── tests/               # Pytest suite (uses temporary databases)
-├── docs/                # Architecture, privacy, demo, roadmap, testing
-├── pyproject.toml
-└── README.md
+├── evals/               # Manual eval set, run by hand against a real model
+├── tests/               # Pytest suite (temporary databases, faked model)
+├── docs/
+└── pyproject.toml
 ```
 
-## Project status and roadmap
+## Status
 
-The project is feature-complete for local task/event/activity/reminder
-management, planner views, confirmed natural language input, interactive chat,
-and a structured agent runtime with optional LLM routing.  Planned future work
-(reminder scheduler, richer LLM routing, Google Calendar, web UI, and more) is
-tracked in [docs/roadmap.md](docs/roadmap.md).  Architecture is documented in
-[docs/architecture.md](docs/architecture.md) and
-[docs/agent-architecture.md](docs/agent-architecture.md).
+The agent handles planning, questions, corrections, and deletions, and the
+confirmation chain covers every write path. Known gaps, in the order they bite:
+
+- **Reminders do not remind.** There is no scheduler; they are rows you can ask
+  about. This is the largest gap against the original idea.
+- **The schema cannot express "tomorrow, time unknown"** for an activity, so the
+  agent asks for a clock time rather than losing the day.
+- Family sharing, meal suggestions, local events, and daily AI news remain
+  ideas. See [docs/roadmap.md](docs/roadmap.md).
 
 ## License
 

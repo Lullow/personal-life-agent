@@ -5,9 +5,6 @@ from life_agent.models.common import (
     ActivityStatus,
     ActivityType,
     EventCategory,
-    FamilyRole,
-    MealType,
-    PreferenceCategory,
     Priority,
     ReminderStatus,
     ReminderTargetType,
@@ -15,12 +12,8 @@ from life_agent.models.common import (
     TaskStatus,
 )
 from life_agent.models.event import CalendarEvent
-from life_agent.models.family import FamilyMember
-from life_agent.models.meal import MealPlan
-from life_agent.models.preference import Preference
 from life_agent.models.reminder import Reminder
 from life_agent.models.task import Task
-from life_agent.models.user import User
 
 __all__ = [
     "ActivityLog",
@@ -28,12 +21,6 @@ __all__ = [
     "ActivityType",
     "CalendarEvent",
     "EventCategory",
-    "FamilyMember",
-    "FamilyRole",
-    "MealPlan",
-    "MealType",
-    "Preference",
-    "PreferenceCategory",
     "Priority",
     "Reminder",
     "ReminderStatus",
@@ -41,5 +28,4 @@ __all__ = [
     "Task",
     "TaskCategory",
     "TaskStatus",
-    "User",
 ]

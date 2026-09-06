@@ -1,18 +1,18 @@
 """CLI tests for the natural-language `complete` command."""
 
 import os
+from datetime import datetime
 
 import pytest
 from typer.testing import CliRunner
 
-from life_agent.db.repositories import list_activities
+from life_agent.db.repositories import create_activity, list_activities
 from life_agent.main import app
-from life_agent.models.common import ActivityStatus
+from life_agent.models import ActivityLog
+from life_agent.models.common import ActivityStatus, ActivityType
 
 runner = CliRunner()
 
-# Seeds a planned activity scheduled for *today* via the add flow.
-PLAN_TODAY_TEXT = "Jag ska träna gym kl 18 idag"
 COMPLETE_TEXT = "Jag har tränat klart"
 
 
@@ -27,8 +27,16 @@ def _db_path() -> str:
 
 
 def _seed_planned_today():
-    result = runner.invoke(app, ["add", "--yes", PLAN_TODAY_TEXT])
-    assert result.exit_code == 0, result.stdout
+    """A planned gym session at 18:00 today, the shape `complete` looks for."""
+    create_activity(
+        ActivityLog(
+            title="Träna gym",
+            activity_type=ActivityType.GYM,
+            status=ActivityStatus.PLANNED,
+            logged_at=datetime.now().replace(hour=18, minute=0, second=0, microsecond=0),
+        ),
+        _db_path(),
+    )
 
 
 def _statuses() -> list[ActivityStatus]:
@@ -38,11 +46,6 @@ def _statuses() -> list[ActivityStatus]:
 # ---------------------------------------------------------------------------
 # Planned vs completed status
 # ---------------------------------------------------------------------------
-
-def test_natural_language_add_saves_planned_activity():
-    _seed_planned_today()
-    assert _statuses() == [ActivityStatus.PLANNED]
-
 
 def test_manual_activity_log_defaults_to_completed():
     result = runner.invoke(app, ["activity", "Gym 50 min", "--type", "gym", "--minutes", "50"])
@@ -127,8 +130,3 @@ def test_complete_empty_text_exits_cleanly():
     assert "No text provided" in result.stdout
 
 
-def test_extract_remains_read_only():
-    result = runner.invoke(app, ["extract", PLAN_TODAY_TEXT])
-    assert result.exit_code == 0
-    assert "Nothing was saved" in result.stdout
-    assert list_activities(db_path=_db_path()) == []

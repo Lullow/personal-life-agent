@@ -1,7 +1,19 @@
 # Testing
 
 The project uses [pytest](https://docs.pytest.org/). Tests are fast,
-deterministic, and never touch your real database.
+deterministic, and never touch your real database — even though the product
+itself is driven by a language model and is neither.
+
+There are two suites, and keeping them apart is the point:
+
+- **`pytest`** — offline. The model is faked, so what is tested is the machinery
+  around it: that the registry rejects invented tools, that a write cannot pass
+  itself off as a read, that nothing is saved without confirmation.
+- **`evals/agent_eval.py`** — calls the real model, and is read with human eyes.
+  Run it whenever you change a prompt.
+
+There are no recorded model fixtures. A recording made against today's model
+says nothing about the one you switch to tomorrow.
 
 ## How to run the tests
 
@@ -16,6 +28,9 @@ pytest -v
 
 # Run a single file
 pytest tests/test_completion_service.py -v
+
+# The eval — costs a few cents, needs LIFE_AGENT_LLM_* configured
+.venv/bin/python evals/agent_eval.py
 ```
 
 Configuration lives in `pyproject.toml`:
@@ -46,9 +61,17 @@ Benefits:
 - Each test starts from a clean, known state, so results are deterministic.
 - Tests do not depend on one another or on machine-specific data.
 
-Because dates like *"imorgon"* must be deterministic, the extraction and
-completion services accept an injectable `reference_date`, so tests assert exact
-timestamps without depending on the real current date.
+Two further isolations matter:
+
+- `tests/conftest.py` neutralises the local `.env`, so a machine with real
+  credentials configured behaves exactly like one without. Without this, whether
+  a test passed would depend on whose laptop it ran on.
+- Dates are made deterministic with an injectable `reference_date` on the
+  completion service and the conversation agent, so tests assert exact
+  timestamps without depending on the real current date.
+
+`evals/agent_eval.py` seeds its own temporary database too, and pins the same
+reference date, so the same sentence stays comparable between runs.
 
 ## What is tested
 
@@ -59,24 +82,31 @@ The suite covers each layer of the [architecture](architecture.md):
 - **Database / repositories** — schema initialisation and CRUD for tasks,
   events, activities, and reminders, including status updates and round-trip
   serialization of dates/datetimes.
-- **Services** — planner views (`today`, `week`, `deadlines`) sorting and
-  filtering; extraction parsing; the confirmation flow (proposal counts,
-  save/skip behavior); and the completion flow (phrase detection, candidate
-  matching, confirmed status change).
-- **CLI** — every command via Typer's `CliRunner`, including the confirmation
-  prompts (yes / `y` / no / Enter), the read-only guarantee of `extract`, and
-  status display in `activities`.
+- **Services** — planner views and timelines, day and range retrieval, the
+  confirmation flow (proposal counts, save/skip behaviour), the completion flow,
+  and `edit_service` resolution (inflected descriptions, ambiguity, dropped
+  guesses).
+- **The agent** — `tests/test_conversation_agent.py` drives the loop with a fake
+  client returning canned payloads: tool validation, the confirmation flags the
+  registry supplies, conversation history, the second call on reads, and every
+  degradation path.
+- **CLI** — commands via Typer's `CliRunner`, including confirmation prompts
+  (yes / `y` / no / Enter) and status display in `activities`.
 
 ## Safety-related tests
 
 Several tests specifically protect the core safety rule that **natural language
 input must not write without explicit confirmation**:
 
-- `extract` saves nothing.
-- `add` saves only on `y`/`yes`; `n`/`no`/Enter save nothing.
-- `complete` updates only on confirmation.
-- The underlying services raise `PermissionError` if a save/update is attempted
-  without confirmation.
+- A proposal writes nothing: after the agent prepares four items, the database
+  is still empty.
+- `save_extracted_items` is flagged `write` and `requires_confirmation` from the
+  registry, whatever the model's own JSON claimed.
+- A hallucinated tool name is not executed.
+- `complete`, `reschedule_item`, and `delete_item` change nothing until
+  confirmed.
+- The underlying services raise `PermissionError` if a save, update, or delete
+  is attempted without confirmation.
 
 > The exact number of tests changes as the project grows; run `pytest -v` to see
 > the current count and the full list.

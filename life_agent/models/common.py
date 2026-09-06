@@ -87,35 +87,6 @@ class ReminderTargetType(StrEnum):
     GENERAL = "general"
 
 
-class MealType(StrEnum):
-    """Meal slots in a daily plan."""
-
-    BREAKFAST = "breakfast"
-    LUNCH = "lunch"
-    DINNER = "dinner"
-    SNACK = "snack"
-
-
-class PreferenceCategory(StrEnum):
-    """Grouping for user preferences."""
-
-    PLANNING = "planning"
-    FOOD = "food"
-    TRAINING = "training"
-    STUDY = "study"
-    FAMILY = "family"
-    OTHER = "other"
-
-
-class FamilyRole(StrEnum):
-    """Relationship role for a family member."""
-
-    PARTNER = "partner"
-    CHILD = "child"
-    PARENT = "parent"
-    OTHER = "other"
-
-
 def validate_non_empty_title(value: str) -> str:
     """Strip whitespace and reject empty titles."""
     stripped = value.strip()

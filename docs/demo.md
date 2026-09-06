@@ -1,229 +1,173 @@
 # Demo
 
-A clean, reproducible walkthrough starting from a fresh local database. It shows
-the natural language `add` (with confirmation), listing activities and
-reminders, the `complete` flow, and the planner views.
+A short, reproducible walkthrough of the agent. It takes a few minutes and costs
+a few cents in model calls.
 
-> Run these from the project root with your virtual environment activated
-> (`source .venv/bin/activate`). When `add` and `complete` ask `[y/N]`, type
-> `y` and press Enter.
+Prerequisites: `pip install -e .`, and `.env` filled in with your
+`LIFE_AGENT_LLM_*` values. See the [README](../README.md).
 
 ## 1. Start from a clean database
 
 ```bash
 rm -f data/life_agent.db
 python -m life_agent init
-```
-
-```
-Database initialised.
-```
-
-## 2. Add from natural language (confirm with `y`)
-
-```bash
-python -m life_agent add "Jag ska träna rygg och biceps kl 12 imorgon, träningen ska vara 1h och påminn mig kl 09."
-```
-
-You will see a proposal and a prompt. Type `y`:
-
-```
-Proposed to save:
-
-Activities:
-  [1] 2026-06-12 12:00 gym 60min - Träna rygg och biceps
-
-Reminders:
-  [1] 2026-06-12 09:00 - Påminnelse
-
-Confidence: 0.55
-
-Will save 2 item(s); skipping 0 incomplete item(s).
-
-Save this? [y/N]: y
-Saved 2 item(s):
-  + activity: Träna rygg och biceps
-  + reminder: Påminnelse
-```
-
-The activity is stored as **planned** (a future plan), not completed.
-
-> Dates are relative to the day you run the command. *"imorgon"* (tomorrow) is
-> resolved against today's date, so the exact timestamps in your output will
-> differ from those shown here.
-
-## 3. List what was saved
-
-```bash
-python -m life_agent activities
-```
-
-```
-[1] planned gym 60min 2026-06-12 12:00 - Träna rygg och biceps
-```
-
-```bash
-python -m life_agent reminders
-```
-
-```
-#1 2026-06-12 09:00 pending general - Påminnelse
-```
-
-## 4. Complete the activity from natural language (confirm with `y`)
-
-```bash
-python -m life_agent complete "Jag har tränat klart"
-```
-
-```
-Matched planned activity:
-  planned gym 60min 2026-06-12 12:00 - Träna rygg och biceps
-
-Mark this activity as completed? [y/N]: y
-Completed: Träna rygg och biceps
-```
-
-## 5. Confirm the status changed
-
-```bash
-python -m life_agent activities
-```
-
-```
-[1] completed gym 60min - Träna rygg och biceps
-```
-
-## 6. Planner views
-
-```bash
-python -m life_agent today
-python -m life_agent week
-```
-
-```
-Today (2026-06-11):
-
-Nothing on the agenda.
-```
-
-```
-Week 2026-06-11 -> 2026-06-17:
-
-Nothing scheduled.
-```
-
-> The planner views summarize **events** and **tasks**. To see them populated,
-> add a task or event, for example:
->
-> ```bash
-> python -m life_agent add-task "Plugga ML" --due 2026-06-12 --priority high --category study
-> python -m life_agent add-event "Möte på Odenplan" --start "2026-06-12 14:00" --location "Odenplan"
-> python -m life_agent week
-> ```
-
-## 7. Run the tests
-
-```bash
-pytest -v
-```
-
-All tests use temporary databases, so running them never touches your
-`data/life_agent.db`.
-
-## Try the read-only preview
-
-`extract` shows what *would* be extracted and saves nothing:
-
-```bash
-python -m life_agent extract "Jag har möte på Odenplan kl 14 imorgon"
-```
-
-```
-Extraction preview:
-
-Events:
-  [1] 2026-06-12 14:00 meeting - Möte (Odenplan)
-
-Confidence: 0.55
-
-Nothing was saved. This is a read-only preview.
-```
-
-## More phrases the extractor understands
-
-The deterministic extractor handles common Swedish planning phrases, including
-relative dates (`idag`, `imorgon`), weekdays (`på fredag` … `på söndag`), and
-times (`kl 9`, `kl 09:00`, `klockan 18`, bare `13:30`). A few examples:
-
-```bash
-# Task with a due date (category inferred: study / errand)
-python -m life_agent extract "Jag behöver plugga machine learning på fredag"
-#   Tasks:
-#     [1] 2026-06-12 medium study - Plugga machine learning
-
-# Errand task
-python -m life_agent extract "Jag måste handla mat imorgon"
-#   Tasks:
-#     [1] 2026-06-12 medium errand - Handla mat
-
-# Reminder with date + time
-python -m life_agent extract "Påminn mig att handla mat imorgon kl 10"
-#   Reminders:
-#     [1] 2026-06-12 10:00 - Handla mat
-
-# Planned gym activity with duration
-python -m life_agent extract "Jag ska gymma bröst och triceps idag kl 18 i 45 minuter"
-#   Activities:
-#     [1] 2026-06-11 18:00 gym 45min - Gymma bröst och triceps
-
-# Appointment on a weekday
-python -m life_agent extract "Jag ska till tandläkaren på fredag kl 10"
-#   Events:
-#     [1] 2026-06-12 10:00 health - Tandläkaren
-```
-
-Vague times such as *"på söndag kväll"* are **not** invented into an exact
-timestamp; the extractor records a clarifying question instead. As always,
-`extract` is read-only and `add` asks `Save this? [y/N]` before writing.
-
-## Interactive chat mode
-
-Instead of running individual commands, you can use `chat` for a conversational
-loop that routes messages to the right service:
-
-```bash
 python -m life_agent chat
 ```
 
+## 2. Plan a day in one sentence
+
 ```
-Hello! I am your personal life agent.
-Type a message, or /help for available commands.
+You: Jag har möte på Odenplan kl 12 imorgon, behöver plugga machine learning,
+     handla mat och träna på kvällen.
+Agent: Jag har förberett fyra saker, vill du spara dem?
 
-You: vad har jag idag
-Today (2026-06-14):
-
-Nothing on the agenda.
-
-You: jag ska träna rygg och biceps kl 12 imorgon, träningen ska vara 1h och påminn mig kl 09
 Proposed to save:
-...
-Save this? [y/N] y
-Saved 2 item(s):
-  + activity: Träna rygg och biceps
-  + reminder: Påminnelse
 
+Events:
+  [1] 2026-09-07 12:00 meeting - Möte på Odenplan (Odenplan)
+
+Tasks:
+  [1] - - study  - Plugga machine learning
+  [2] - - errand - Handla mat
+
+Activities:
+  [1] - gym - - Träna
+
+Will save 4 item(s); skipping 0 incomplete item(s).
+
+Save this? [y/N] y
+Saved 4 item(s):
+  + task: Plugga machine learning
+  + task: Handla mat
+  + event: Möte på Odenplan
+  + activity: Träna
+```
+
+One message, four items, sorted into three kinds. The list of what was saved is
+generated from the database, not from what the agent said it did.
+
+Answer anything other than `y`/`yes`/`j`/`ja` — including a bare Enter — and
+nothing is written.
+
+## 3. Ask about the day
+
+```
+You: Vad har jag på agendan imorgon?
+Agent: Imorgon har du ett möte på Odenplan kl 12:00, och två saker att hinna med.
+
+Tomorrow (2026-09-07):
+
+  12:00  Möte på Odenplan  (Odenplan)
+
+Any time:
+  - Plugga machine learning
+  - Handla mat
+```
+
+The day reads as a timeline, in the order it is lived. Things without a clock
+time collect under **Any time** — that is where tasks live, since a task carries
+only a due date.
+
+The agent answers in words *and* prints the rows, so you can check it.
+
+## 4. Follow up
+
+```
+You: och idag då?
+Agent: Idag har du träning inplanerad.
+```
+
+The last ten turns are kept in memory, so "och idag då?" resolves without you
+repeating yourself. That memory is per session and is gone when you quit; the
+database is the long-term memory.
+
+## 5. Correct something
+
+```
+You: flytta mötet imorgon till 13:00
+Agent: Jag har förberett att flytta mötet till 13:00 imorgon. Vill du spara ändringen?
+
+Matched: event: Möte på Odenplan (2026-09-07 12:00)
+
+Move it to 2026-09-07 13:00? [y/N] y
+Moved event: Möte på Odenplan to 2026-09-07 13:00
+```
+
+You describe the item; the application finds it and shows you exactly which row
+matched before anything changes. If your description fits several things, it
+lists them and asks which you meant.
+
+`ta bort` works the same way.
+
+## 6. Mark a session done
+
+```
 You: jag har tränat klart
+Agent: Bra jobbat! Vill du att jag markerar det som klart?
+
 Matched planned activity:
-  planned gym 60min 2026-06-15 12:00 - Träna rygg och biceps
+  planned gym - 2026-09-07 18:00 - Träna
 
 Mark this activity as completed? [y/N] y
-Completed: Träna rygg och biceps
-
-You: /quit
-Bye!
+Completed: Träna
 ```
 
-Type `/help` for a full list of phrases the chat mode recognises. The same
-safety rules apply: planning text asks for confirmation before saving, and
-completion text asks before updating.
+## 7. Look backwards
+
+```
+You: hur mycket har jag tränat den senaste veckan?
+Agent: Du har tränat en gång den senaste veckan, ett pass på 60 minuter.
+
+2026-08-31 -> 2026-09-07:
+
+Mon 2026-09-07:
+  18:00  Träna  (60 min, done)
+```
+
+## 8. Structured commands
+
+The same data is reachable without talking, when typing is faster:
+
+```bash
+python -m life_agent add-task "Plugga machine learning" --due 2026-09-12 --priority high --category study
+python -m life_agent tasks
+python -m life_agent done 1
+
+python -m life_agent add-event "Möte på Odenplan" --start "2026-09-07 12:00" --location "Odenplan"
+python -m life_agent events
+
+python -m life_agent activity "Gym rygg och biceps" --type gym --minutes 50
+python -m life_agent activities
+
+python -m life_agent add-reminder "Träning" --at "2026-09-07 09:00"
+python -m life_agent reminders
+python -m life_agent dismiss-reminder 1
+
+python -m life_agent today
+python -m life_agent week
+python -m life_agent deadlines
+```
+
+Manual activity logs default to `completed`; ones the agent saves for a future
+day are `planned`, which is what `complete` later looks for.
+
+## 9. Run the tests
+
+```bash
+pytest                                  # offline, the model is faked
+.venv/bin/python evals/agent_eval.py    # fifteen real sentences, calls the model
+```
+
+Neither touches `data/life_agent.db`.
+
+## What to expect when it is wrong
+
+It will be, sometimes. Useful things to know:
+
+- It never writes without asking, so a misunderstanding costs you one `n`.
+- If it proposes the wrong thing, say what was wrong in the next message rather
+  than starting over — it has the conversation in front of it.
+- If it says it could not reach the model, check `LIFE_AGENT_LLM_*` in `.env`.
+  A malformed value looks exactly like a missing one.
+- Model quality shows up as misclassification and as claiming saves that did not
+  happen. See the comparison in [llm-first-pivot.md](llm-first-pivot.md).
