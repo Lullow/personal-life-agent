@@ -17,6 +17,11 @@ The loop then does what the model may not do for itself:
 * nothing is written here.  A mutating tool comes back as
   ``kind="needs_confirmation"`` and the caller asks the user.
 
+What the model is allowed to remember between turns is not decided here
+either: the loop writes to a :class:`~life_agent.agent.memory.ConversationMemory`
+and asks it what to recall.  Which strategy that is, and when it compacts, is
+the memory's business — see ``CLAUDE.md``.
+
 See ``docs/llm-first-pivot.md`` for why this replaces the deterministic router.
 """
 
@@ -25,9 +30,19 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Any, Literal, Protocol
+from typing import Any, Callable, Literal, Protocol
 
 from life_agent.agent.decisions import AgentDecision
+from life_agent.agent.memory import (
+    DEFAULT_BUDGET_TOKENS,
+    DEFAULT_HISTORY_TURNS,
+    ConversationMemory,
+    MemoryRecord,
+    RecentTurnsMemory,
+    RecordKind,
+    Role,
+    make_record_id,
+)
 from life_agent.agent.policy import validate_decision_safety
 from life_agent.agent.prompts import (
     AGENT_SYSTEM_PROMPT_TEMPLATE,
@@ -41,8 +56,6 @@ from life_agent.schemas.extraction import ExtractionResult
 log = logging.getLogger(__name__)
 
 TurnKind = Literal["reply", "display", "needs_confirmation"]
-
-DEFAULT_HISTORY_TURNS = 10
 
 LLM_UNAVAILABLE_TEXT = (
     "I could not reach the language model, so I did not understand that.\n"
@@ -157,7 +170,20 @@ class ConversationAgent:
     db_path:
         Database path forwarded to read-only service helpers.
     max_history_turns:
-        How many user+assistant pairs to send back to the model.
+        Window for the default memory, in user+assistant pairs.  Ignored when
+        *memory* is supplied — the window is that strategy's own business.
+    memory:
+        Memory strategy to remember and recall through.  Defaults to
+        :class:`~life_agent.agent.memory.RecentTurnsMemory`, which is what this
+        loop did before the memory layer was extracted.
+    clock:
+        Reads the wall clock that stamps records and bounds recall.  Injectable
+        so the time cutoff is testable at all.
+    session_id:
+        Names the conversation.  Records are keyed on it, so supplying it makes
+        a replayed history produce the same record ids every time.
+    budget_tokens:
+        How much recalled context to allow into one call.
     reference_date:
         "Today" as the model is told it.  Injectable so tests are stable.
     """
@@ -169,26 +195,39 @@ class ConversationAgent:
         registry: ToolRegistry | None = None,
         db_path: str | None = None,
         max_history_turns: int = DEFAULT_HISTORY_TURNS,
+        memory: ConversationMemory | None = None,
+        clock: Callable[[], datetime] | None = None,
+        session_id: str | None = None,
+        budget_tokens: int = DEFAULT_BUDGET_TOKENS,
         reference_date: date | None = None,
     ) -> None:
         self._client = llm_client
         self._registry = registry or build_default_tool_registry()
         self._db_path = db_path
-        self._max_messages = max_history_turns * 2
         self._reference_date = reference_date
-        self._history: list[dict[str, str]] = []
+        self._clock = clock or datetime.now
+        self._budget_tokens = budget_tokens
+        self._memory = memory or RecentTurnsMemory(max_turns=max_history_turns)
+        self._session_id = session_id or f"s{self._clock():%Y%m%dT%H%M%S%f}"
+        self._turn_index = 0
 
     # ------------------------------------------------------------------
-    # Conversation history
+    # Memory
     # ------------------------------------------------------------------
 
     @property
     def history(self) -> list[dict[str, str]]:
-        """The messages sent to the model, oldest first."""
-        return list(self._history)
+        """What a query-less recall returns, oldest first.
+
+        # TODO: remove — a leftover from the message buffer this class used to
+        own.  "The history" is only a meaningful question to ask a
+        recency-ordered strategy; anything else answers per query.  Callers
+        should ask the memory what it recalls for a real query instead.
+        """
+        return self._recall("")
 
     def record_outcome(self, text: str) -> None:
-        """Add what actually happened to the history.
+        """Add what actually happened to the memory.
 
         The caller uses this after a save so the next turn is grounded in the
         real outcome rather than in what the model claimed it did.
@@ -196,10 +235,28 @@ class ConversationAgent:
         if text and text.strip():
             self._append("assistant", text.strip())
 
-    def _append(self, role: str, content: str) -> None:
-        self._history.append({"role": role, "content": content})
-        if len(self._history) > self._max_messages:
-            self._history = self._history[-self._max_messages :]
+    def end_session(self) -> None:
+        """Tell the memory the conversation is over; it may consolidate."""
+        self._memory.end_session()
+
+    def _append(self, role: Role, content: str, kind: RecordKind = "message") -> None:
+        self._memory.write(
+            MemoryRecord(
+                id=make_record_id(self._session_id, self._turn_index),
+                role=role,
+                content=content,
+                kind=kind,
+                at=self._clock(),
+                session_id=self._session_id,
+            )
+        )
+        self._turn_index += 1
+
+    def _recall(self, query: str) -> list[dict[str, str]]:
+        """The context the memory wants the model to see for *query*."""
+        return self._memory.retrieve(
+            query, at=self._clock(), budget_tokens=self._budget_tokens
+        ).messages
 
     # ------------------------------------------------------------------
     # The loop
@@ -232,7 +289,7 @@ class ConversationAgent:
         client = self._get_client()
         if client is None:
             return None
-        messages = [*self._history, {"role": "user", "content": text}]
+        messages = [*self._recall(text), {"role": "user", "content": text}]
         try:
             payload = client.chat_json(self.system_prompt(), messages)
         except Exception:
@@ -351,7 +408,7 @@ class ConversationAgent:
         if client is None:
             return None
         messages = [
-            *self._history,
+            *self._recall(question),
             {"role": "user", "content": question},
             {
                 "role": "user",

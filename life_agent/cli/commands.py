@@ -441,3 +441,6 @@ def register_commands(app: typer.Typer) -> None:
                     outcome = "Cancelled. Nothing was updated."
                     console.print(f"[bold yellow]{outcome}[/bold yellow]")
                 conversation.record_outcome(outcome)
+
+        # The session is over; the memory may want to compact before it ends.
+        conversation.end_session()
