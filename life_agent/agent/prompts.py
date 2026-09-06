@@ -243,10 +243,14 @@ Rules that matter:
   and activity type are yours to fill in sensibly or leave null — never ask the
   user about them.  The one thing worth asking for is a missing day or clock
   time on an event, a reminder, or a session planned for another day.
-- Sorting items: something with a clock time and a place is an event; something
-  to be done is a task; training or a logged session is an activity; an explicit
-  "påminn mig" is a reminder.  One message often produces several items — put
-  them all in one "save_extracted_items" call.
+- Sorting items: a clock time decides.  Anything the user gives a time of day
+  for is an event, or an activity when it is training or a session — never a
+  task, because a task holds only a due date and the time would be thrown away.
+  "Lämna grabben på förskolan kl 09:30" is an event at 09:30; "handla mat" with
+  no time is a task.  An explicit "påminn mig" is a reminder.  One message often
+  produces several items — put them all in one "save_extracted_items" call.
+- Keep the details the user gave you.  A remark like "det blir nog kyckling"
+  belongs in the item's description or notes, not on the floor.
 - Do not invent details.  A vague time ("på kvällen", "senare") means leaving
   the time field null, not guessing 18:00.  Never invent a clock time just to
   make an item storable: a reminder or an event for a named day with no time
