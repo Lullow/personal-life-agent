@@ -74,6 +74,27 @@ def _parse_date_argument(value: Any) -> date | None:
         return None
 
 
+def _read_tool_call(payload: dict[str, Any]) -> tuple[str | None, dict[str, Any]]:
+    """Read the tool name and arguments out of a model response.
+
+    The documented envelope is ``{"tool": ..., "arguments": {...}}``, but models
+    also write ``{"delete_item": {...}}`` — the right intent in the wrong shape.
+    That is accepted when the key is a tool the agent actually has, since the
+    registry still decides what the name is allowed to do.
+    """
+    raw_tool = payload.get("tool")
+    if isinstance(raw_tool, str) and raw_tool.strip():
+        arguments = payload.get("arguments")
+        return raw_tool.strip(), arguments if isinstance(arguments, dict) else {}
+
+    for name in AGENT_TOOL_NAMES:
+        value = payload.get(name)
+        if isinstance(value, dict):
+            return name, value
+
+    return None, {}
+
+
 def _parse_datetime_argument(value: Any) -> datetime | None:
     """Read an ISO timestamp out of a model-supplied argument, or ``None``."""
     if not isinstance(value, str):
@@ -199,11 +220,7 @@ class ConversationAgent:
             )
 
         reply = str(payload.get("reply") or "").strip()
-        raw_tool = payload.get("tool")
-        tool_name = raw_tool.strip() if isinstance(raw_tool, str) and raw_tool.strip() else None
-        arguments = payload.get("arguments")
-        if not isinstance(arguments, dict):
-            arguments = {}
+        tool_name, arguments = _read_tool_call(payload)
 
         self._append("user", text)
 

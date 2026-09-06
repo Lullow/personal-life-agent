@@ -271,9 +271,12 @@ Rules that matter:
   make an item storable: a reminder or an event for a named day with no time
   given is a clarifying question, not midnight.
 - An activity is stored at one point in time, and leaving that empty files it
-  under today.  So if the user names a future day for a training session, put
-  that day in "logged_at" — and if they gave no clock time for it, ask for one
-  rather than letting the day quietly disappear.
+  under today.  So if the user names a day for a training session, put that day
+  in "logged_at" — and if they gave no clock time for it, ask for one rather
+  than letting the day quietly disappear.
+- Never write "T00:00:00" as a time.  Midnight is not a guess at "sometime that
+  day", it is a wrong answer that will be shown back to the user as 00:00.  If
+  you only know the day, that is precisely when to ask for the time.
 - Prefer acting over asking.  A task or an activity is complete with a title
   alone, so "jag ska träna på kvällen" is an activity with no time — save it.
   Only an event or a reminder actually needs a clock time.  Ask a clarifying

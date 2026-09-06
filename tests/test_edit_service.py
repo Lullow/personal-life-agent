@@ -66,9 +66,24 @@ class TestFinding:
         assert [m.item_type for m in found] == ["event"]
         assert found[0].when == datetime(2026, 9, 7, 9, 30)
 
-    def test_narrows_by_day(self, seeded):
-        assert find_items("handla", day=date(2026, 9, 8), db_path=seeded)
-        assert find_items("handla", day=date(2026, 9, 7), db_path=seeded) == []
+    def test_narrows_by_day_when_the_day_matches(self, seeded):
+        create_task(Task(title="Handla mat", due_date=date(2026, 9, 9)), seeded)
+
+        found = find_items("handla", day=date(2026, 9, 8), db_path=seeded)
+
+        assert [m.item_type for m in found] == ["reminder"]
+
+    def test_a_wrong_day_is_dropped_rather_than_returning_nothing(self, seeded):
+        """The agent guesses the day too, and a wrong guess must not hide a row."""
+        found = find_items("handla", day=date(2026, 9, 7), db_path=seeded)
+
+        assert [m.title for m in found] == ["Handla mat"]
+        assert found[0].day == date(2026, 9, 8)
+
+    def test_a_wrong_kind_is_dropped_too(self, seeded):
+        found = find_items("handla", item_type="activity", db_path=seeded)
+
+        assert [m.item_type for m in found] == ["reminder"]
 
     def test_finds_across_all_four_kinds(self, seeded):
         kinds = {m.item_type for m in find_items(item_type=None, title="", db_path=seeded) or []}

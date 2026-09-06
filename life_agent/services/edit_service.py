@@ -145,23 +145,41 @@ def find_items(
     if not needle and item_type is None and day is None:
         return []
 
-    matches = _all_items(db_path)
-    if item_type is not None:
-        matches = [m for m in matches if m.item_type == item_type]
-    if day is not None:
-        matches = [m for m in matches if m.day == day]
+    everything = _all_items(db_path)
 
-    if needle:
-        needle_words = _words(needle)
-        scored = [(_score(needle_words, m.title), m) for m in matches]
-        scored = [(score, m) for score, m in scored if score > 0 or needle in m.title.lower()]
-        if not scored:
-            return []
-        best = max(score for score, _ in scored)
-        matches = [m for score, m in scored if score == best]
+    # The agent guesses at the kind and the day as well as the title, and a
+    # wrong guess should not make a findable row unfindable.  Narrow first,
+    # then drop the guesses one at a time until something matches.
+    for use_type, use_day in ((True, True), (True, False), (False, True), (False, False)):
+        matches = everything
+        if use_type and item_type is not None:
+            matches = [m for m in matches if m.item_type == item_type]
+        if use_day and day is not None:
+            matches = [m for m in matches if m.day == day]
 
-    matches.sort(key=lambda m: (m.day is None, m.day or date.min, m.title))
-    return matches
+        matches = _best_by_title(needle, matches)
+        if matches:
+            matches.sort(key=lambda m: (m.day is None, m.day or date.min, m.title))
+            return matches
+
+    return []
+
+
+def _best_by_title(needle: str, matches: list[ItemMatch]) -> list[ItemMatch]:
+    """Keep only the items whose titles match *needle* best."""
+    if not needle:
+        return list(matches)
+
+    needle_words = _words(needle)
+    scored = [
+        (_score(needle_words, m.title), m)
+        for m in matches
+        if _score(needle_words, m.title) > 0 or needle in m.title.lower()
+    ]
+    if not scored:
+        return []
+    best = max(score for score, _ in scored)
+    return [m for score, m in scored if score == best]
 
 
 def delete_item(
