@@ -146,11 +146,11 @@ def get_day_response(day: date, db_path: str | None = None) -> str:
 
 
 def get_range_response(start: date, end: date, db_path: str | None = None) -> str:
-    """Render everything scheduled or logged between two dates, inclusive."""
-    from life_agent.cli.formatters import format_week_agenda
-    from life_agent.services.planner_service import get_range_agenda
+    """Render every day between two dates, inclusive, as timelines."""
+    from life_agent.cli.formatters import format_range_timeline
+    from life_agent.services.planner_service import get_range_timeline
 
-    return format_week_agenda(get_range_agenda(start, end, db_path=db_path))
+    return format_range_timeline(get_range_timeline(start, end, db_path=db_path))
 
 
 def get_query_saved_data_response(text: str, db_path: str | None = None) -> str:

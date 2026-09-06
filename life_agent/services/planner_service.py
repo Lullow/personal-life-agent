@@ -103,9 +103,49 @@ def get_day_timeline(
     belong in a morning read: the things to fit in somewhere.
     """
     target = day or date.today()
+    return _timeline_for_day(
+        target,
+        list_events(db_path, start=target, end=target),
+        _activities_between(target, target, db_path),
+        _active_tasks(db_path),
+    )
+
+
+def get_range_timeline(
+    start: date,
+    end: date,
+    db_path: str | None = None,
+) -> list[DailyAgenda]:
+    """Return one :class:`DailyAgenda` per day across the inclusive range.
+
+    Everything is fetched once and bucketed, so a month costs the same three
+    queries as a day.
+    """
+    if end < start:
+        raise ValueError("end must not be before start")
+
+    events = list_events(db_path, start=start, end=end)
+    activities = _activities_between(start, end, db_path)
+    tasks = _active_tasks(db_path)
+
+    days: list[DailyAgenda] = []
+    day = start
+    while day <= end:
+        days.append(_timeline_for_day(day, events, activities, tasks))
+        day += timedelta(days=1)
+    return days
+
+
+def _timeline_for_day(
+    target: date,
+    events: list[CalendarEvent],
+    activities: list[ActivityLog],
+    tasks: list[Task],
+) -> DailyAgenda:
+    """Merge one day's rows into time-ordered :class:`AgendaItem` values."""
     items: list[AgendaItem] = []
 
-    for event in list_events(db_path, start=target, end=target):
+    for event in [e for e in events if e.start_time.date() == target]:
         items.append(
             AgendaItem(
                 title=event.title,
@@ -117,7 +157,7 @@ def get_day_timeline(
             )
         )
 
-    for activity in _activities_between(target, target, db_path):
+    for activity in [a for a in activities if a.logged_at.date() == target]:
         details = []
         if activity.duration_minutes:
             details.append(f"{activity.duration_minutes} min")
@@ -134,7 +174,7 @@ def get_day_timeline(
         )
 
     for task in _sort_tasks_by_priority(
-        [t for t in _active_tasks(db_path) if t.due_date == target]
+        [t for t in tasks if t.due_date == target]
     ):
         items.append(
             AgendaItem(

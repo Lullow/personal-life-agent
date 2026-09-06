@@ -135,6 +135,35 @@ def format_daily_agenda(agenda: DailyAgenda) -> str:
     return "\n".join(lines)
 
 
+def format_range_timeline(days: list[DailyAgenda]) -> str:
+    """Render several days as timelines, skipping the empty ones."""
+    if not days:
+        return "Nothing scheduled."
+
+    header = f"{days[0].date.isoformat()} -> {days[-1].date.isoformat()}:"
+    lines: list[str] = [header]
+
+    populated = [d for d in days if d.items]
+    if not populated:
+        lines.append("")
+        lines.append("Nothing scheduled.")
+        return "\n".join(lines)
+
+    for day in populated:
+        lines.append("")
+        body = format_daily_agenda(day).split("\n")
+        # Replace the per-day heading with the plain date; the range header
+        # above already says which stretch of days this is.
+        lines.append(f"{day.date.strftime('%a')} {day.date.isoformat()}:")
+        for line in body[1:]:
+            if not line.strip():
+                continue
+            # Sub-headings inside a day sit one level in, like its rows do.
+            lines.append(line if line.startswith(" ") else f"  {line}")
+
+    return "\n".join(lines)
+
+
 def format_week_agenda(agenda: WeekAgenda) -> str:
     """Render a 7-day plan grouped by date.  Empty days are skipped."""
     lines: list[str] = [
