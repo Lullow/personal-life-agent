@@ -14,6 +14,7 @@ import pytest
 
 from life_agent.agent.conversation import (
     BAD_ARGUMENTS_TEXT,
+    BAD_DATE_TEXT,
     LLM_UNAVAILABLE_TEXT,
     ConversationAgent,
 )
@@ -188,13 +189,21 @@ class TestToolValidation:
         assert turn.decision.tool_name is None
 
     def test_read_tool_is_dispatched_immediately(self, db_path):
-        payload = {"tool": "list_today", "arguments": {}, "reply": "Här är idag."}
-        turn = _agent(payload, db_path=db_path).send("vad har jag idag")
+        payload = {"tool": "list_reminders", "arguments": {}, "reply": "Här är de."}
+        turn = _agent(payload, db_path=db_path).send("visa mina påminnelser")
 
         assert turn.kind == "display"
         assert turn.decision.action_type == "read"
         assert turn.decision.requires_confirmation is False
-        assert "Today" in turn.text
+        assert "reminders" in turn.text.lower()
+
+    def test_a_day_assuming_tool_is_out_of_scope(self, db_path):
+        """list_today is registered for the old chat path, not for the agent."""
+        payload = {"tool": "list_today", "arguments": {}, "reply": "Här är idag."}
+        turn = _agent(payload, db_path=db_path).send("vad har jag idag")
+
+        assert turn.kind == "reply"
+        assert turn.decision.tool_name is None
 
     def test_clarifying_question_is_only_a_reply(self, db_path):
         payload = {
@@ -311,3 +320,99 @@ def test_system_prompt_carries_the_reference_date(db_path):
 
     assert "2026-09-06" in prompt
     assert "Sunday" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Date-parameterised read tools
+# ---------------------------------------------------------------------------
+
+
+def _plan_activity(db_path, title, when):
+    from life_agent.db.repositories import create_activity
+    from life_agent.models import ActivityLog
+    from life_agent.models.common import ActivityStatus, ActivityType
+
+    create_activity(
+        ActivityLog(
+            title=title,
+            activity_type=ActivityType.GYM,
+            status=ActivityStatus.PLANNED,
+            logged_at=when,
+        ),
+        db_path,
+    )
+
+
+class TestDateReadTools:
+    def test_list_day_answers_for_the_requested_day(self, db_path):
+        from datetime import datetime
+
+        _plan_activity(db_path, "Träna rygg", datetime(2026, 9, 7, 18, 0))
+        payload = {
+            "tool": "list_day",
+            "arguments": {"date": "2026-09-07"},
+            "reply": "Jag kollar imorgon åt dig.",
+        }
+
+        turn = _agent(payload, db_path=db_path).send("vad har jag imorgon?")
+
+        assert turn.kind == "display"
+        assert turn.decision.tool_name == "list_day"
+        assert "2026-09-07" in turn.text
+        assert "Träna rygg" in turn.text
+
+    def test_list_day_without_a_date_asks_instead_of_guessing(self, db_path):
+        payload = {"tool": "list_day", "arguments": {}, "reply": ""}
+
+        turn = _agent(payload, db_path=db_path).send("vad har jag då?")
+
+        assert turn.kind == "reply"
+        assert turn.reply == BAD_DATE_TEXT
+        assert turn.decision.tool_name is None
+
+    def test_list_day_with_an_unusable_date_asks_instead_of_guessing(self, db_path):
+        payload = {"tool": "list_day", "arguments": {"date": "imorgon"}, "reply": ""}
+
+        turn = _agent(payload, db_path=db_path).send("vad har jag imorgon?")
+
+        assert turn.kind == "reply"
+        assert turn.reply == BAD_DATE_TEXT
+
+    def test_list_range_reaches_into_history(self, db_path):
+        from datetime import datetime
+
+        _plan_activity(db_path, "Marspass", datetime(2026, 3, 15, 18, 0))
+        payload = {
+            "tool": "list_range",
+            "arguments": {"from": "2026-03-01", "to": "2026-03-31"},
+            "reply": "Jag tittar på mars.",
+        }
+
+        turn = _agent(payload, db_path=db_path).send("vad gjorde jag i mars?")
+
+        assert turn.kind == "display"
+        assert "Marspass" in turn.text
+
+    def test_list_range_with_one_bound_covers_that_single_day(self, db_path):
+        payload = {
+            "tool": "list_range",
+            "arguments": {"from": "2026-03-15"},
+            "reply": "Jag kollar.",
+        }
+
+        turn = _agent(payload, db_path=db_path).send("vad hände den 15:e mars?")
+
+        assert turn.kind == "display"
+        assert "2026-03-15 -> 2026-03-15" in turn.text
+
+    def test_list_range_survives_reversed_bounds(self, db_path):
+        payload = {
+            "tool": "list_range",
+            "arguments": {"from": "2026-03-31", "to": "2026-03-01"},
+            "reply": "Jag kollar.",
+        }
+
+        turn = _agent(payload, db_path=db_path).send("mars?")
+
+        assert turn.kind == "display"
+        assert "2026-03-01 -> 2026-03-31" in turn.text

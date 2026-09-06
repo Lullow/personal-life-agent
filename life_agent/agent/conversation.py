@@ -45,13 +45,24 @@ LLM_UNAVAILABLE_TEXT = (
     "Check LIFE_AGENT_LLM_BASE_URL, _API_KEY and _MODEL in your .env."
 )
 BAD_ARGUMENTS_TEXT = "I got that a bit wrong — could you say it once more?"
+BAD_DATE_TEXT = "Which date did you mean?"
 
+# Read tools that take no arguments.  Anything date-shaped goes through
+# list_day / list_range instead, so the agent always names the day it means.
 _READ_HANDLERS: dict[str, str] = {
-    "list_today": "get_today_response",
-    "list_week": "get_week_response",
     "list_deadlines": "get_deadlines_response",
     "list_reminders": "get_reminders_response",
 }
+
+
+def _parse_date_argument(value: Any) -> date | None:
+    """Read an ISO date out of a model-supplied argument, or ``None``."""
+    if not isinstance(value, str):
+        return None
+    try:
+        return date.fromisoformat(value.strip()[:10])
+    except ValueError:
+        return None
 
 
 class AgentLLMClient(Protocol):
@@ -259,6 +270,12 @@ class ConversationAgent:
                 kind="display", reply=reply, decision=decision, text=self._dispatch_read(tool.name)
             )
 
+        if tool.name == "list_day":
+            return self._dispatch_day(decision, arguments, reply)
+
+        if tool.name == "list_range":
+            return self._dispatch_range(decision, arguments, reply)
+
         if tool.name == "save_extracted_items":
             return self._propose_save(decision, arguments, reply)
 
@@ -273,6 +290,49 @@ class ConversationAgent:
 
         handler = getattr(chat_service, _READ_HANDLERS[tool_name])
         return handler(db_path=self._db_path)
+
+    def _dispatch_day(
+        self, decision: AgentDecision, arguments: dict[str, Any], reply: str
+    ) -> AgentTurn:
+        from life_agent.services.chat_service import get_day_response
+
+        day = _parse_date_argument(arguments.get("date"))
+        if day is None:
+            # Answering for the wrong day is worse than asking which one.
+            return AgentTurn(
+                kind="reply",
+                reply=reply or BAD_DATE_TEXT,
+                decision=_no_tool_decision("missing_date", reply),
+            )
+        return AgentTurn(
+            kind="display",
+            reply=reply,
+            decision=decision,
+            text=get_day_response(day, db_path=self._db_path),
+        )
+
+    def _dispatch_range(
+        self, decision: AgentDecision, arguments: dict[str, Any], reply: str
+    ) -> AgentTurn:
+        from life_agent.services.chat_service import get_range_response
+
+        start = _parse_date_argument(arguments.get("from"))
+        end = _parse_date_argument(arguments.get("to"))
+        start, end = start or end, end or start
+        if start is None or end is None:
+            return AgentTurn(
+                kind="reply",
+                reply=reply or BAD_DATE_TEXT,
+                decision=_no_tool_decision("missing_date", reply),
+            )
+        if end < start:
+            start, end = end, start
+        return AgentTurn(
+            kind="display",
+            reply=reply,
+            decision=decision,
+            text=get_range_response(start, end, db_path=self._db_path),
+        )
 
     def _propose_save(
         self, decision: AgentDecision, arguments: dict[str, Any], reply: str

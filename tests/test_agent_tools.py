@@ -119,4 +119,4 @@ class TestDefaultRegistry:
 
     def test_tool_count(self):
         reg = build_default_tool_registry()
-        assert len(reg.list_tools()) == 10
+        assert len(reg.list_tools()) == 12

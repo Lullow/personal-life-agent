@@ -60,6 +60,20 @@ _DEFAULT_TOOLS: list[ToolDefinition] = [
         handler_name="get_week_response",
     ),
     ToolDefinition(
+        name="list_day",
+        description="Show the schedule for one specific date",
+        action_type="read",
+        requires_confirmation=False,
+        handler_name="get_day_response",
+    ),
+    ToolDefinition(
+        name="list_range",
+        description="Show everything scheduled or logged between two dates",
+        action_type="read",
+        requires_confirmation=False,
+        handler_name="get_range_response",
+    ),
+    ToolDefinition(
         name="list_deadlines",
         description="Show upcoming deadlines",
         action_type="read",

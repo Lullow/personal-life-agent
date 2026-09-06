@@ -12,6 +12,7 @@ explicitly confirms.
 
 from __future__ import annotations
 
+from datetime import date
 from enum import StrEnum
 
 from life_agent.agent.router import AgentRouter
@@ -134,6 +135,22 @@ def get_reminders_response(db_path: str | None = None) -> str:
     if not pending:
         return "No pending reminders."
     return "\n".join(format_reminder_line(r) for r in pending)
+
+
+def get_day_response(day: date, db_path: str | None = None) -> str:
+    """Render the agenda for one specific calendar day."""
+    from life_agent.cli.formatters import format_today_agenda
+    from life_agent.services.planner_service import get_day_agenda
+
+    return format_today_agenda(get_day_agenda(day, db_path=db_path))
+
+
+def get_range_response(start: date, end: date, db_path: str | None = None) -> str:
+    """Render everything scheduled or logged between two dates, inclusive."""
+    from life_agent.cli.formatters import format_week_agenda
+    from life_agent.services.planner_service import get_range_agenda
+
+    return format_week_agenda(get_range_agenda(start, end, db_path=db_path))
 
 
 def get_query_saved_data_response(text: str, db_path: str | None = None) -> str:

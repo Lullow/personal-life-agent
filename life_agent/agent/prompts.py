@@ -218,8 +218,14 @@ Available tools:
                     "notes": str | null}}]
   }}
 
-- "list_today" — what is on the schedule today.
-- "list_week" — what is on the schedule this week.
+- "list_day" — one specific day.  Arguments: {{"date": "YYYY-MM-DD"}}.  Today
+  is a date like any other: "vad har jag idag" is this tool with today's date,
+  "imorgon" is tomorrow's, "på fredag" is the next Friday's.  Work the date out
+  from today's date above; there is no tool that assumes a day for you.
+- "list_range" — everything between two days, including what is already
+  logged.  Arguments: {{"from": "YYYY-MM-DD", "to": "YYYY-MM-DD"}}.  Use it for
+  "den här månaden", "vad gjorde jag i mars", "hur mycket har jag tränat den
+  senaste veckan".
 - "list_deadlines" — upcoming task deadlines.
 - "list_reminders" — pending reminders.
 - "complete_activity" — the user says they finished a planned activity
@@ -230,6 +236,13 @@ Available tools:
 Rules that matter:
 
 - Use exactly one tool per message, or null.  Never invent a tool name.
+- Never ask for permission to save.  The application always shows the user what
+  you prepared and asks them; asking first only makes them answer twice.  A
+  clarifying question is for a detail you are missing, never for consent.
+- Only "title" is required.  Category, priority, duration, description, notes
+  and activity type are yours to fill in sensibly or leave null — never ask the
+  user about them.  The one thing worth asking for is a missing day or clock
+  time on an event, a reminder, or a session planned for another day.
 - Sorting items: something with a clock time and a place is an event; something
   to be done is a task; training or a logged session is an activity; an explicit
   "påminn mig" is a reminder.  One message often produces several items — put
@@ -262,8 +275,8 @@ Rules that matter:
 
 AGENT_TOOL_NAMES: tuple[str, ...] = (
     "save_extracted_items",
-    "list_today",
-    "list_week",
+    "list_day",
+    "list_range",
     "list_deadlines",
     "list_reminders",
     "complete_activity",

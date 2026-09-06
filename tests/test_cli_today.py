@@ -57,7 +57,7 @@ def test_today_shows_events_tasks_and_undated():
     assert "Pay invoice" in result.stdout
     assert "Random idea" in result.stdout
     assert "Events:" in result.stdout
-    assert "Tasks due today:" in result.stdout
+    assert "Tasks due:" in result.stdout
     assert "Other pending tasks:" in result.stdout
 
 
@@ -68,7 +68,7 @@ def test_today_hides_done_tasks():
 
     result = runner.invoke(app, ["today"])
     assert result.exit_code == 0
-    assert "Tasks due today:" not in result.stdout
+    assert "Tasks due:" not in result.stdout
 
 
 # ---------------------------------------------------------------------------

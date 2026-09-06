@@ -2,7 +2,7 @@
 
 import sqlite3
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from life_agent.db.database import get_connection
 from life_agent.models import ActivityLog, CalendarEvent, Reminder, Task
@@ -37,6 +37,33 @@ def _parse_date(value: str | None) -> date | None:
     if value is None:
         return None
     return date.fromisoformat(value)
+
+
+def _timestamp_range(
+    column: str,
+    start: date | None,
+    end: date | None,
+) -> tuple[list[str], list[str]]:
+    """SQL clauses bounding an ISO timestamp *column* to whole calendar days.
+
+    Timestamps are stored as ISO-8601 text, which sorts chronologically, so a
+    day range is a plain string comparison: ``>= "2026-03-01"`` includes every
+    time on 1 March, and ``< "2026-04-01"`` includes all of 31 March.  Both
+    bounds are inclusive days.
+    """
+    clauses: list[str] = []
+    params: list[str] = []
+    if start is not None:
+        clauses.append(f"{column} >= ?")
+        params.append(start.isoformat())
+    if end is not None:
+        clauses.append(f"{column} < ?")
+        params.append((end + timedelta(days=1)).isoformat())
+    return clauses, params
+
+
+def _where(clauses: list[str]) -> str:
+    return (" WHERE " + " AND ".join(clauses)) if clauses else ""
 
 
 # ---------------------------------------------------------------------------
@@ -88,12 +115,31 @@ def create_task(task: Task, db_path: str | None = None) -> Task:
     return task.model_copy(update={"id": task_id})
 
 
-def list_tasks(db_path: str | None = None) -> list[Task]:
-    """Return all tasks ordered by creation time (newest first)."""
+def list_tasks(
+    db_path: str | None = None,
+    *,
+    due_from: date | None = None,
+    due_to: date | None = None,
+) -> list[Task]:
+    """Return tasks ordered by creation time (newest first).
+
+    *due_from* and *due_to* are inclusive bounds on ``due_date``; passing
+    either drops tasks that have no due date at all.
+    """
+    clauses: list[str] = []
+    params: list[str] = []
+    if due_from is not None:
+        clauses.append("due_date >= ?")
+        params.append(due_from.isoformat())
+    if due_to is not None:
+        clauses.append("due_date <= ?")
+        params.append(due_to.isoformat())
+
     conn = get_connection(db_path)
     try:
         rows = conn.execute(
-            "SELECT * FROM tasks ORDER BY created_at DESC"
+            f"SELECT * FROM tasks{_where(clauses)} ORDER BY created_at DESC",
+            params,
         ).fetchall()
         return [_row_to_task(r) for r in rows]
     finally:
@@ -176,12 +222,22 @@ def create_event(event: CalendarEvent, db_path: str | None = None) -> CalendarEv
     return event.model_copy(update={"id": event_id})
 
 
-def list_events(db_path: str | None = None) -> list[CalendarEvent]:
-    """Return all events ordered by start time (soonest first)."""
+def list_events(
+    db_path: str | None = None,
+    *,
+    start: date | None = None,
+    end: date | None = None,
+) -> list[CalendarEvent]:
+    """Return events ordered by start time (soonest first).
+
+    *start* and *end* are inclusive calendar-day bounds on ``start_time``.
+    """
+    clauses, params = _timestamp_range("start_time", start, end)
     conn = get_connection(db_path)
     try:
         rows = conn.execute(
-            "SELECT * FROM events ORDER BY start_time ASC"
+            f"SELECT * FROM events{_where(clauses)} ORDER BY start_time ASC",
+            params,
         ).fetchall()
         return [_row_to_event(r) for r in rows]
     finally:
@@ -236,22 +292,26 @@ def create_activity(activity: ActivityLog, db_path: str | None = None) -> Activi
 def list_activities(
     status: str | None = None,
     db_path: str | None = None,
+    *,
+    start: date | None = None,
+    end: date | None = None,
 ) -> list[ActivityLog]:
     """Return activities ordered by logged time (newest first).
 
     When *status* is provided, only activities with that status are returned.
+    *start* and *end* are inclusive calendar-day bounds on ``logged_at``.
     """
+    clauses, params = _timestamp_range("logged_at", start, end)
+    if status is not None:
+        clauses.append("status = ?")
+        params.append(status)
+
     conn = get_connection(db_path)
     try:
-        if status is None:
-            rows = conn.execute(
-                "SELECT * FROM activities ORDER BY logged_at DESC"
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM activities WHERE status = ? ORDER BY logged_at DESC",
-                (status,),
-            ).fetchall()
+        rows = conn.execute(
+            f"SELECT * FROM activities{_where(clauses)} ORDER BY logged_at DESC",
+            params,
+        ).fetchall()
         return [_row_to_activity(r) for r in rows]
     finally:
         conn.close()

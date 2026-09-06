@@ -1,5 +1,7 @@
 """Readable terminal output formatting for domain models and agendas."""
 
+from datetime import date as date_type
+
 from life_agent.models import ActivityLog, CalendarEvent, Reminder, Task
 from life_agent.models.common import ActivityStatus
 from life_agent.schemas.confirmation import (
@@ -52,9 +54,19 @@ def format_reminder_line(reminder: Reminder) -> str:
     return f"#{reminder.id} {when} {reminder.status} {reminder.target_type} - {reminder.title}"
 
 
+def format_day_heading(day: date_type) -> str:
+    """Name a day the way the reader thinks of it."""
+    today = date_type.today()
+    if day == today:
+        return f"Today ({day.isoformat()})"
+    if day == today.fromordinal(today.toordinal() + 1):
+        return f"Tomorrow ({day.isoformat()})"
+    return f"{day.strftime('%A')} ({day.isoformat()})"
+
+
 def format_today_agenda(agenda: TodayAgenda) -> str:
-    """Render today's events, tasks due today, and undated pending tasks."""
-    lines: list[str] = [f"Today ({agenda.date.isoformat()}):"]
+    """Render one day's events, tasks, activities, and undated pending tasks."""
+    lines: list[str] = [f"{format_day_heading(agenda.date)}:"]
 
     if agenda.events:
         lines.append("")
@@ -64,9 +76,15 @@ def format_today_agenda(agenda: TodayAgenda) -> str:
 
     if agenda.tasks_due_today:
         lines.append("")
-        lines.append("Tasks due today:")
+        lines.append("Tasks due:")
         for i, task in enumerate(agenda.tasks_due_today, start=1):
             lines.append("  " + format_task_line(i, task))
+
+    if agenda.activities:
+        lines.append("")
+        lines.append("Activities:")
+        for i, activity in enumerate(agenda.activities, start=1):
+            lines.append("  " + format_activity_line(i, activity))
 
     if agenda.undated_tasks:
         lines.append("")
@@ -74,7 +92,12 @@ def format_today_agenda(agenda: TodayAgenda) -> str:
         for i, task in enumerate(agenda.undated_tasks, start=1):
             lines.append("  " + format_task_line(i, task))
 
-    if not (agenda.events or agenda.tasks_due_today or agenda.undated_tasks):
+    if not (
+        agenda.events
+        or agenda.tasks_due_today
+        or agenda.activities
+        or agenda.undated_tasks
+    ):
         lines.append("")
         lines.append("Nothing on the agenda.")
 
@@ -89,7 +112,7 @@ def format_week_agenda(agenda: WeekAgenda) -> str:
 
     has_content = False
     for day in agenda.days:
-        if not day.events and not day.tasks:
+        if not day.events and not day.tasks and not day.activities:
             continue
         has_content = True
         lines.append("")
@@ -98,6 +121,8 @@ def format_week_agenda(agenda: WeekAgenda) -> str:
             lines.append("  " + format_event_line(i, event))
         for i, task in enumerate(day.tasks, start=1):
             lines.append("  " + format_task_line(i, task))
+        for i, activity in enumerate(day.activities, start=1):
+            lines.append("  " + format_activity_line(i, activity))
 
     if not has_content:
         lines.append("")

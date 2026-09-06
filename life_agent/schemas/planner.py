@@ -5,7 +5,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
-from life_agent.models import CalendarEvent, Task
+from life_agent.models import ActivityLog, CalendarEvent, Task
 
 
 class AgendaItemType(StrEnum):
@@ -38,20 +38,22 @@ class DailyAgenda(BaseModel):
 
 
 class DayPlan(BaseModel):
-    """Typed events and pending tasks for a single calendar day."""
+    """Typed events, pending tasks, and activities for a single calendar day."""
 
     date: date
     events: list[CalendarEvent] = Field(default_factory=list)
     tasks: list[Task] = Field(default_factory=list)
+    activities: list[ActivityLog] = Field(default_factory=list)
 
 
 class TodayAgenda(BaseModel):
-    """Today's plan: events, tasks due today, and undated pending tasks."""
+    """One day's plan: events, tasks due that day, activities, and undated tasks."""
 
     date: date
     events: list[CalendarEvent] = Field(default_factory=list)
     tasks_due_today: list[Task] = Field(default_factory=list)
     undated_tasks: list[Task] = Field(default_factory=list)
+    activities: list[ActivityLog] = Field(default_factory=list)
 
 
 class WeekAgenda(BaseModel):
