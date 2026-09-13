@@ -85,9 +85,11 @@ inclusive day bounds (`start`/`end`, or `due_from`/`due_to` for tasks).
 > Natural language input must not write to the database without explicit
 > user confirmation.
 
-The memory layer is not an exception to this rule. It persists natural
-language to its own store, which is not the database the rule protects —
-memory has no write path to domain tables and is read-only into the prompt.
+The memory layer is not an exception to this rule. It must persist natural
+language to its own store, which is not the database the rule protects. Memory
+has no write path to domain tables and is read-only into the prompt. No
+strategy persists anything yet — `RecentTurnsMemory` keeps its records in a
+list in the process — and persistence comes in step 4 (`docs/vg-project.md`).
 See "Memory layer" below.
 
 Enforced in code, not convention, at three independent layers:
@@ -212,13 +214,15 @@ class ConversationMemory(Protocol):
     def end_session(self) -> None: ...
 ```
 
-Three implementations, in this order:
+Three implementations, in this order. Only `RecentTurnsMemory` is built; the
+other two come in step 5 (`docs/vg-project.md`).
 
-1. `RecentTurnsMemory` — the last N turns, windowed at retrieve. The agent's
-   default, and the baseline.
-2. `RetrievalMemory` — top-k over everything. Has no way to overwrite stale
-   facts. **This is intentional** — it is what the baseline should fail at.
-3. `ConsolidatingMemory` — rolling summary plus a recent window.
+1. `RecentTurnsMemory` — **built.** The last N turns, windowed at retrieve. The
+   agent's default, and the baseline.
+2. `RetrievalMemory` — **not built.** Top-k over everything, with no way to
+   overwrite stale facts. **This is intentional** — it is what the baseline
+   should fail at.
+3. `ConsolidatingMemory` — **not built.** Rolling summary plus a recent window.
 
 ### Rules that hold across all implementations
 
@@ -251,20 +255,23 @@ comparable between the things being compared.
 
 ### Boundaries
 
-Memory persistence writes to its own store. **Never** through
+Memory persistence must write to its own store. **Never** through
 `db/repositories.py`, never to a domain table. Memory is read-only into the
 prompt and has no write path into domain data.
 
-`ConsolidatingMemory` makes an additional LLM call, outside the turn.
-That call must never be able to produce a tool call — same discipline `READ_ANSWER_SYSTEM_PROMPT` already has.
+Consolidation's LLM call runs outside the turn and must never be able to
+produce a tool call — the same discipline `READ_ANSWER_SYSTEM_PROMPT` already
+has. `ConsolidatingMemory` is not built yet; it comes in step 5.
 
 Tests are offline (`tests/conftest.py` neutralises `.env`). Any embedding-based
 retrieval needs a deterministic fake embedder behind the same Protocol.
 
-Cost is measured **on the LLM client**, not inside memory: a `RecordingLLMClient`
-wraps `AgentLLMClient` and logs each call with a label ("consolidate",
-"answer", …). A strategy that retrieves more context makes the answer call more
-expensive, and a counter living inside the memory module cannot see that.
+Cost must be measured **on the LLM client**, not inside the memory module. A
+strategy that retrieves more context makes the answer call more expensive, and
+a counter living inside the memory module cannot see that. The client that does
+it is a `RecordingLLMClient` wrapping `AgentLLMClient` and logging each call
+with a label ("consolidate", "answer", …). It is not built yet; it comes in
+step H.
 
 ### Out of scope
 
@@ -276,6 +283,7 @@ The agent is a Swedish household planner that is deliberately forbidden from
 answering from memory — it looks things up. LongMemEval measures an English
 assistant answering from memory. These are different jobs.
 
-The evaluation therefore runs **headless**: `evals/longmemeval.py` drives the
-memory module through a thin harness, not through `ConversationAgent.send()`.
-The agent never appears in the measured path.
+The evaluation must therefore run **headless**: `evals/longmemeval.py` must
+drive the memory module through a thin harness, not through
+`ConversationAgent.send()`, and the agent must never appear in the measured
+path. The file is not written yet; it comes in step H.

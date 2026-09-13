@@ -11,8 +11,8 @@ other on LongMemEval: `RecentTurnsMemory`, `RetrievalMemory` and
 
 **The agent project** is the household planner itself — the `life_agent`
 package, a Typer CLI. In the VG project it is the consumer of the memory layer
-and the demo, not the thing being measured. The evaluation runs headless, and
-the agent never appears in the measured path (see "Memory layer" in
+and the demo, not the thing being measured. The evaluation must run headless,
+and the agent must never appear in the measured path (see "Memory layer" in
 `CLAUDE.md`).
 
 ## Constraints

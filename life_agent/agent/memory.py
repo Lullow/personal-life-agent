@@ -142,7 +142,7 @@ class ConversationMemory(Protocol):
 
 
 class RecentTurnsMemory:
-    """The last N turns and nothing else — the behaviour being replaced.
+    """The last N turns and nothing else — the agent's default, and the baseline.
 
     It ignores *query* entirely: recency is its only notion of relevance.  It
     never consolidates, so it can neither compact an old conversation nor
@@ -150,7 +150,7 @@ class RecentTurnsMemory:
     baseline the other two strategies have to beat, and the shape of its
     failures is part of the result.
 
-    One difference from the buffer it replaces, which belongs in the method
+    One difference from the buffer it replaced, which belongs in the method
     section of any write-up: **the window is applied when recalling, not when
     writing.**  The old code discarded a message the moment it fell out of the
     buffer, so nothing could later ask what it had thrown away.  This keeps
