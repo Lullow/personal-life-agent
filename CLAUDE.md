@@ -15,6 +15,13 @@ offline extractor with an optional LLM bolted on, and the reasoning behind the
 change is in `docs/llm-first-pivot.md`. Read that before proposing anything that
 adds pattern matching back.
 
+This repo holds two projects: the graded memory-strategy comparison (the VG
+project) and the agent that consumes it. `docs/vg-project.md` separates them —
+read it before proposing larger work in the memory layer.
+
+`docs/logg.md` is the author's lab journal, in Swedish. Do not read,
+edit, or summarise it unless explicitly asked.
+
 ## Commands
 
 ```bash
@@ -165,19 +172,6 @@ saves that did not happen. There is a measured comparison in the pivot doc.
 
 
 ## Memory layer
-
-Status: active refactor, weeks 1–5. Steps 1–3 are behaviour-preserving.
-
-### What we are doing
-
-The conversation memory is being extracted from `ConversationAgent` into a
-swappable module behind a Protocol. The goal is to compare three memory
-strategies against each other in a measured evaluation (LongMemEval). The
-comparison is the project; the agent is the consumer.
-
-This means: **the interface is the contract.** If a change makes it harder to
-swap the backend with one config line, the change is wrong, however clean it
-looks.
 
 ### The interface
 
