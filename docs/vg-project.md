@@ -15,10 +15,6 @@ and the demo, not the thing being measured. The evaluation runs headless, and
 the agent never appears in the measured path (see "Memory layer" in
 `CLAUDE.md`).
 
-This means **the interface is the contract.** If a change makes it harder to
-swap the memory backend with one config line, the change is wrong, however
-clean it looks.
-
 ## Constraints
 
 - Six weeks in total.

@@ -107,13 +107,17 @@ and routed through a confirmation flow, never called from the loop.
 
 ```
 message → ConversationAgent.send()          life_agent/agent/conversation.py
-  history (10 turns) + system prompt → one call → {"tool", "arguments", "reply"}
+  memory.retrieve(...) + system prompt → one call → {"tool", "arguments", "reply"}
   → ToolRegistry lookup → AgentDecision → AgentPolicy → dispatch → AgentTurn
 ```
 
-`history (10 turns)` is being replaced by the memory Protocol — see
-"Memory layer" below. Both call sites that build a message list from the
-buffer become `retrieve(...)`.
+The agent owns no message buffer; context comes from the memory Protocol — see
+"Memory layer" below. Both calls that build a message list, the tool call in
+`_ask_model` and the read answer in `_answer_from_data`, get it from
+`retrieve(...)`, and `send()` writes the user message and the reply back through
+`write()`. The default strategy is `RecentTurnsMemory` (`DEFAULT_HISTORY_TURNS`,
+10 turns). After a save the CLI calls `record_outcome()`, and `end_session()`
+when the chat closes.
 
 Four things matter and are easy to break:
 
@@ -175,6 +179,10 @@ saves that did not happen. There is a measured comparison in the pivot doc.
 
 ### The interface
 
+**The interface is the contract.** If a change makes it harder to swap the
+memory backend with one config line, the change is wrong, however clean it
+looks.
+
 `life_agent/agent/memory.py`
 
 ```python
@@ -206,7 +214,8 @@ class ConversationMemory(Protocol):
 
 Three implementations, in this order:
 
-1. `RecentTurnsMemory` — current behaviour. Baseline.
+1. `RecentTurnsMemory` — the last N turns, windowed at retrieve. The agent's
+   default, and the baseline.
 2. `RetrievalMemory` — top-k over everything. Has no way to overwrite stale
    facts. **This is intentional** — it is what the baseline should fail at.
 3. `ConsolidatingMemory` — rolling summary plus a recent window.
