@@ -49,6 +49,9 @@ from life_agent.agent.memory import (  # noqa: E402
 )
 
 DATASET = ROOT / "data" / "longmemeval" / "longmemeval_s_cleaned.json"
+# ADR 0004: the harness refuses any other file. The table below checks this
+# constant against the record's text.
+DATASET_SHA256 = "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442"
 ADR_DIR = ROOT / "docs" / "adr"
 SSU, KU = "single-session-user", "knowledge-update"
 TYPES = (SSU, KU)
@@ -169,6 +172,15 @@ def recall(x: dict, records: list[MemoryRecord], ends: set[int], max_turns: int)
 def load() -> tuple[bytes, list[dict]]:
     raw = DATASET.read_bytes()
     return raw, json.loads(raw)
+
+
+def load_pinned() -> list[dict]:
+    """The dataset, or SystemExit if it is not the file ADR 0004 pins."""
+    raw = DATASET.read_bytes()
+    digest = hashlib.sha256(raw).hexdigest()
+    if digest != DATASET_SHA256:
+        raise SystemExit(f"{DATASET.name} has sha256 {digest}; ADR 0004 pins {DATASET_SHA256}")
+    return json.loads(raw)
 
 
 def pool_of(data: list[dict]) -> list[dict]:
@@ -432,6 +444,8 @@ def claims_for(f: dict) -> list[Claim]:
     return [
         # 0004
         Claim("0004", "dataset sha256", r"sha256 `([0-9a-f]{64})`", (f["sha256"],)),
+        Claim("0004", "the sha256 the harness pins", r"sha256 `([0-9a-f]{64})`", (DATASET_SHA256,),
+              note="DATASET_SHA256 in this script"),
         Claim("0004", "HF revision", r"revision `([0-9a-f]{40})`", kind="external",
               note="HF API, checked in session 2026-09-26"),
         Claim("0004", "no session on a later day than its question",
