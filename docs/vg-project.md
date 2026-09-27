@@ -32,8 +32,9 @@ each strategy answer, and at what cost?
 
 **Selection.** Two question types from LongMemEval_S that separate the
 hypotheses: `single-session-user` (find a fact) and `knowledge-update` (a fact
-that has changed). Tentatively 30 questions per type; M1 fixes the number once
-the cost per question is known.
+that has changed). M1 fixes the number per type, N, from the estimated total
+cost of the comparison, consolidation included. N is at most 61, the number of
+eligible `single-session-user` questions (0005).
 
 **Measures.** Share of correct answers per type, retrieval precision and
 recall, and tokens per answer.
@@ -74,8 +75,9 @@ behind them are recorded in `docs/adr/`:
 
 - `evals/longmemeval.py` runs `RecentTurnsMemory` headless on 20 questions,
   10 of each type.
-- `RecordingLLMClient` measures the cost per question with a real tokenizer,
-  and the number of questions per type is fixed from it.
+- `RecordingLLMClient` measures the cost per question with a real tokenizer.
+  N per type is fixed from the estimated total cost of all three strategies,
+  consolidation calls included, and is at most 61.
 - The harness rules are recorded as ADRs before the run, 0004–0009: how a
   history is replayed, which questions are measured, how tokens are counted,
   the baseline filling the budget instead of keeping its turn window, how
@@ -94,9 +96,9 @@ behind them are recorded in `docs/adr/`:
 
 **M3 — three strategies (step 5, second half). Done by Tuesday 6 October.**
 
-- `ConsolidatingMemory` is built. Before it is measured, two rules are
-  recorded as ADRs: how a summary counts toward recall, and where the
-  strategy's clock comes from during a replay.
+- `ConsolidatingMemory` is built. Before it is measured, three rules are
+  recorded as ADRs: which model consolidates, how a summary counts toward
+  recall, and where the strategy's clock comes from during a replay.
 - It runs on the same questions: the full table of three strategies × two
   types.
 - Hard stop. If it is not measured by the end of Tuesday 6 October, the report
