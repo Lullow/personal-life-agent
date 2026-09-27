@@ -118,6 +118,12 @@ measurement. Tentative until it is known whether the course requires it.
   `ConsolidatingMemory`. M2 always stays.
 - A measurement rule is decided and recorded as an ADR before the strategy it
   applies to is measured, so no method is tuned to its own result.
+- A committed ADR is closed. A finding reopens it only if it shows the
+  measurement is wrong — a bug in the harness, records crossing the time
+  cutoff, evidence ids that do not match `sources`, a question whose answer
+  cannot be reached — not because another choice would also be defensible.
+  Then a new ADR supersedes the old one, and everything measured under it is
+  measured again. Every other finding goes into the report as a limitation.
 - Each milestone date is a checkpoint: compare progress with this plan, and
   cut by the order above if it lags.
 
