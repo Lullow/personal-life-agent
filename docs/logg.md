@@ -27,18 +27,60 @@ Jag fick också ännu ett exempel på att agenten kunde ge en säker men felakti
 eftersom den inte hade läst hela texten.
 Därför gjorde jag `verify_adr_numbers.py`, så att viktiga siffror går att kontrollera direkt med kod.
 
-Jag insåg också att ett modellbyte inte betyder att modellen "glömmer projektet" på det sätt jag först tänkte.
-Varje anrop är redan tillståndslöst. Det jag egentligen riskerar att förlora är hur väl p
+Jag insåg också att ett modellbyte inte betyder att modellen "glömmer projektet" på det sätt jag först tänkte.Varje anrop är redan tillståndslöst. Det jag egentligen riskerar att förlora är hur väl promptarna passar modellen
 inte själva arbetet.
 
-Kostnaden hittills är nästan noll; piloten beräknas kosta under $0,50, ungefär fem kronor.
+Kostnaden hittills är nästan noll; har kostat 0,433 dollar(inkluderar ett kontrollanrop), ungefär fem kronor.
 Det dyrare steget blir M3 och konsolideringen.
-Jag funderade på lokala modeller på min 3090, men valde bort det eftersom det skulle bli
+Jag funderade på lokala modeller på min 3090, men valde bort det eftersom det skulle bli mer komplicerat, 
 och rättningen ändå behöver göras med GPT-4o för att resultaten ska vara jämförbara.
 
 Det som fortfarande är öppet är bland annat i vilken ordning RetrievalMemory ska ge historiken till modellen (M2),
 om svarsprompten i 0008 håller när den testas, vilken modell som ska användas för konsolideringen i M3 
 och vilket statistiskt test som passar bäst.
+
+---
+
+Piloten kördes efter lunch och jag gick igenom alla 20 frågor. Baslinjen hittade rätt evidens i 3 av 20 fall, 
+och de 17 missarna svarade alla "I do not know". H1 håller, men det är mest en kontroll av att riggen fungerar
+och ger en tydlig ribba inför M2.
+
+Den enda frågan som blev fel trots att evidensen fanns i kontexten var Starbucks-frågan. Där följde modellen
+sin egen kunskap i stället för användarens uppgift. Det är ett modellfel, inte ett retrievalfel, så rapporten 
+behöver visa både andel rätt och hur ofta rätt evidens faktiskt nådde kontexten.
+
+Jag läste också KU-frågorna fel först och trodde att fyra facit var fel. Det visade sig att jag bara hade tittat
+på den äldre av två evidensturer. Det behöver förklaras tydligt i metoddelen.
+
+Piloten kostade 0,4135 dollar. Kvar nu är att bestämma antal frågor per typ, 
+kontrollera kostnaden mot OpenRouter och fylla på saldo inför M2.
+
+---
+
+Piloten kostade 0,4135 dollar, och min egen kostnadsräkning stämde mot OpenRouter på en tiondels cent. 
+Det känns bra, för då vet jag att tokenräkningen faktiskt håller.
+
+Utifrån det räknade jag på hela projektet. Själva svaren och rättningen är billiga, ungefär 70 kr för alla 
+tre strategierna. Det dyra är M3, där konsolideringen måste läsa hela historiken för varje fråga. 
+Det är i snitt 48 sessioner gånger 122 frågor. Med gpt-4o hade bara den delen kostat ungefär 850 kr 
+med korta sammanfattningar och över 1200 kr med längre. Det hade ätit upp nästan hela budgeten och 
+lämnat väldigt lite utrymme för en omkörning.
+
+Därför valde jag gpt-4o-mini för konsolideringen och N = 61 per frågetyp, alltså alla frågor som klarar urvalet. 
+Nackdelen är att ett dåligt resultat i M3 då kan bero på att modellen sammanfattar sämre, 
+inte bara på själva metoden. Det skriver jag därför som en begränsning.
+
+Om tiden finns tänker jag kontrollera det genom att köra fem av historikerna med gpt-4o också. 
+Det kostar ungefär 30–75 kr extra. Vilka fem som ska användas är bestämt i förväg, 
+de första fem KU-frågorna i 0005-ordningen, så att jag inte kan välja ut dem efter att jag sett resultaten.
+Det beslutet ligger i ADR 0010.
+
+Jag gjorde också evals/estimate_cost.py --check, som räknar om siffrorna i ADR 0010 direkt från pilotresultaten och datasetet.
+Första körningen hittade två fel, men de låg i skriptets sökmönster och inte i själva siffrorna. 
+Det följer samma princip som verify_adr_numbers.py: viktiga siffror i texten ska gå att kontrollera med kod.
+
+Det som är kvar i M1 nu är metodutkastet, avstämningen på tisdag och att fylla på OpenRouter inför M2. 
+Ungefär 300 kr bör räcka för resten av projektet, inklusive en omkörning.
 
 ## 2026-09-26
 
