@@ -85,6 +85,12 @@ H1 to H3 are the three hypotheses in `docs/vg-project.md`, in order.
 
 H1 is confirmed: all three questions where the evidence was reached lie within
 6.3k tokens of the question, all 17 misses at least 10k away, and every miss
-was "I do not know". H2 and H3 are untested. H2 is settled in M2 by breakdown
+was "I do not know". The split by distance follows from how the baseline is
+built rather than from the measurement: it returns the most recent messages
+that fit the budget, so it reaches the evidence exactly when the evidence is not
+long-term, and ADR 0007 already calls the floor hypothesis partly a check that
+the harness works. What the pilot adds is that the model never guessed, and that
+one of the three questions with the evidence in context was still answered
+wrong. H2 and H3 are untested. H2 is settled in M2 by breakdown
 `both` against correct; H3's cost is estimated from `history_tokens`.
 `0f05491a` is a model error outside the hypotheses.
