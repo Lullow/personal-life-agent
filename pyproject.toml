@@ -15,6 +15,11 @@ dependencies = [
     "pytest>=8.0",
 ]
 
+[project.optional-dependencies]
+# The LongMemEval evaluation counts tokens with tiktoken (ADR 0006). The app
+# and the tests never import it.
+eval = ["tiktoken>=0.7"]
+
 [project.scripts]
 life-agent = "life_agent.main:app"
 

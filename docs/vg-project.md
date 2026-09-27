@@ -76,10 +76,11 @@ behind them are recorded in `docs/adr/`:
   10 of each type.
 - `RecordingLLMClient` measures the cost per question with a real tokenizer,
   and the number of questions per type is fixed from it.
-- The harness rules are recorded as ADRs before the run: turns are numbered
-  exactly as the dataset lists them, `ApproxTokenCounter` is refused, and
-  `tokens_used` is reported per question, since the baseline's turn window
-  binds before the budget does.
+- The harness rules are recorded as ADRs before the run, 0004–0009: how a
+  history is replayed, which questions are measured, how tokens are counted,
+  the baseline filling the budget instead of keeping its turn window, how
+  answers are produced and graded, and how precision and recall are computed.
+  `ApproxTokenCounter` is refused, as 0003 already decided.
 - The method section exists as a draft.
 
 **M2 — two strategies compared (step 5, first half). Done by Friday
