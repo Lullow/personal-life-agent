@@ -39,6 +39,13 @@ pytest tests/test_conversation_agent.py::TestEditFlows -v
 # Eval — calls the real model, costs a few cents, read it with your eyes
 .venv/bin/python evals/agent_eval.py
 
+# LongMemEval harness — needs the eval extra and the pinned dataset in
+# data/longmemeval/ (ADR 0004). Rows go to data/longmemeval/runs/.
+pip install -e '.[eval]'
+.venv/bin/python evals/longmemeval.py --dry-run     # offline: replay, recall, token counts
+.venv/bin/python evals/longmemeval.py               # 10 per type; calls the model, costs money
+.venv/bin/python evals/verify_adr_numbers.py        # recompute every figure in ADRs 0004–0009
+
 # Run
 python -m life_agent chat
 ```
@@ -270,8 +277,7 @@ Cost must be measured **on the LLM client**, not inside the memory module. A
 strategy that retrieves more context makes the answer call more expensive, and
 a counter living inside the memory module cannot see that. The client that does
 it is a `RecordingLLMClient` wrapping `AgentLLMClient` and logging each call
-with a label ("consolidate", "answer", …). It is not built yet; it comes in
-step H.
+with a label ("consolidate", "answer", …): `life_agent/agent/recording.py`.
 
 ### Out of scope
 
@@ -286,4 +292,6 @@ assistant answering from memory. These are different jobs.
 The evaluation must therefore run **headless**: `evals/longmemeval.py` must
 drive the memory module through a thin harness, not through
 `ConversationAgent.send()`, and the agent must never appear in the measured
-path. The file is not written yet; it comes in step H.
+path. It reads its questions from `evals/longmemeval_questions.json` and its
+replay rules from `evals/verify_adr_numbers.py`; ADRs 0004–0009 are its
+specification.

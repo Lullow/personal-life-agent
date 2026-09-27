@@ -109,11 +109,11 @@ class ApproxTokenCounter:
     Swedish, whose compounds split into more tokens than their length suggests.
     The evaluation injects a real tokenizer where the number is published.
 
-    # TODO: ``evals/longmemeval.py`` must **raise** when handed one of these,
-    # not warn.  A cost table built on a four-character heuristic looks exactly
-    # like a real one, and this docstring is not something a harness can
-    # enforce.  Wire the check up when that harness is written.  See
-    # ``docs/adr/0003-approx-token-counter-as-the-default.md``.
+    ``evals/longmemeval.py`` refuses one of these rather than warn: a cost
+    table built on a four-character heuristic looks exactly like a real one.
+    It also recounts every recall with its own tokenizer, which catches a
+    strategy that fell back on this default.  See
+    ``docs/adr/0003-approx-token-counter-as-the-default.md``.
     """
 
     _CHARS_PER_TOKEN = 4
