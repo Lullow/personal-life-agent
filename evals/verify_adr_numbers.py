@@ -56,9 +56,8 @@ ADR_DIR = ROOT / "docs" / "adr"
 SSU, KU = "single-session-user", "knowledge-update"
 TYPES = (SSU, KU)
 PILOT_PER_TYPE = 10  # ADR 0005: M1 takes the first 10 of each type
-# RecentTurnsMemory cannot yet take max_turns=None (ADR 0007), so "no window"
-# is a window no history can reach.
-NO_WINDOW = 10**9
+# ADR 0007: the evaluation runs RecentTurnsMemory without a turn window.
+NO_WINDOW = None
 # The pattern ADR 0008 counts as "time-worded". A definition, not a fact.
 TIME_WORDED = re.compile(
     r"\b(how long|how many (days|weeks|months|years)|when did|ago|since when|how old)\b",
@@ -160,7 +159,7 @@ class TiktokenCounter:
 COUNTER = TiktokenCounter()
 
 
-def recall(x: dict, records: list[MemoryRecord], ends: set[int], max_turns: int):
+def recall(x: dict, records: list[MemoryRecord], ends: set[int], max_turns: int | None):
     memory = RecentTurnsMemory(max_turns=max_turns, token_counter=COUNTER)
     for k, record in enumerate(records, start=1):
         memory.write(record)
@@ -552,7 +551,9 @@ def claims_for(f: dict) -> list[Claim]:
         Claim("0007", "evidence in budget fill: SSU / KU", r"Inside the budget fill: (\d+) of (\d+) and (\d+) of (\d+)",
               (f["evidence in fill SSU / KU"][0], f["pool SSU"], f["evidence in fill SSU / KU"][1], f["pool KU"])),
         Claim("0007", "default turn window", r"`DEFAULT_HISTORY_TURNS`, (\d+) turns", (DEFAULT_HISTORY_TURNS,)),
-        Claim("0007", "max_turns=None fails today", r"computes `max_turns \* 2`, which fails on `None`", _fails_on_none()),
+        Claim("0007", "max_turns=None means no turn limit",
+              r"`RecentTurnsMemory` must accept `max_turns=None` to mean no turn limit", _accepts_none(),
+              note="25 records written, 25 recalled; the record's 'fails on None' described the code before"),
         Claim("0007", "baseline sees evidence iff not long-term", r"those are the questions where the baseline can see it: (\d+) and (\d+)",
               f["evidence in fill SSU / KU"],
               note="sets coincide" if f["in fill exactly when not long-term"] else "sets DIFFER"),
@@ -607,12 +608,12 @@ def _inclusive_at_limit() -> bool:
     return memory.retrieve("q", at=limit, budget_tokens=DEFAULT_BUDGET_TOKENS).sources == ("s:0",)
 
 
-def _fails_on_none() -> bool:
-    try:
-        RecentTurnsMemory(max_turns=None)  # type: ignore[arg-type]
-    except TypeError:
-        return True
-    return False
+def _accepts_none() -> bool:
+    memory = RecentTurnsMemory(max_turns=None, token_counter=COUNTER)
+    for i in range(25):
+        memory.write(MemoryRecord(id=f"s:{i}", role="user", content="x", kind="message",
+                                  at=datetime(2023, 5, 30), session_id="s"))
+    return len(memory.retrieve("q", at=datetime(2023, 5, 30), budget_tokens=DEFAULT_BUDGET_TOKENS).sources) == 25
 
 
 def main() -> int:

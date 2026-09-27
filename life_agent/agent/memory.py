@@ -34,8 +34,9 @@ from typing import Literal, Protocol
 # constant the conversation loop used to hold.
 DEFAULT_HISTORY_TURNS = 10
 
-# Room for recalled context in one call.  Generous on purpose: the baseline is
-# bounded by its turn window long before it reaches this.
+# Room for recalled context in one call.  Generous on purpose: the agent's
+# baseline is bounded by its turn window long before it reaches this.  The
+# evaluation drops the window and fills this budget instead (ADR 0007).
 DEFAULT_BUDGET_TOKENS = 8000
 
 RecordKind = Literal["message", "outcome", "summary"]
@@ -160,15 +161,21 @@ class RecentTurnsMemory:
     found, not what the previous implementation still had in memory.  The
     messages the model sees are identical; the claim being measured is not.
     See ``docs/adr/0002-window-truncates-at-retrieve.md``.
+
+    ``max_turns=None`` removes the window, leaving the token budget as the only
+    limit: the most recent messages that fit.  That is how the evaluation runs
+    it, so that every strategy gets the same allowance
+    (``docs/adr/0007-the-baseline-fills-the-budget.md``).  The agent keeps
+    :data:`DEFAULT_HISTORY_TURNS`.
     """
 
     def __init__(
         self,
         *,
-        max_turns: int = DEFAULT_HISTORY_TURNS,
+        max_turns: int | None = DEFAULT_HISTORY_TURNS,
         token_counter: TokenCounter | None = None,
     ) -> None:
-        self._max_messages = max_turns * 2
+        self._max_messages = None if max_turns is None else max_turns * 2
         self._counter = token_counter or ApproxTokenCounter()
         self._records: list[MemoryRecord] = []
 
@@ -184,7 +191,10 @@ class RecentTurnsMemory:
         self, query: str, *, at: datetime, budget_tokens: int
     ) -> Retrieval:
         visible = [r for r in self._records if r.at <= at]
-        window = visible[-self._max_messages :] if self._max_messages else []
+        if self._max_messages is None:
+            window = visible
+        else:
+            window = visible[-self._max_messages :] if self._max_messages else []
 
         # Fill backwards from the newest, so what survives a tight budget is
         # the most recent context rather than the oldest.

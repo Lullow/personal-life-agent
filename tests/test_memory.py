@@ -25,6 +25,7 @@ LATER = NOW + timedelta(hours=1)
 # starts applying to them without a line of new test code.
 STRATEGIES = [
     pytest.param(lambda: RecentTurnsMemory(max_turns=10), id="recent-turns"),
+    pytest.param(lambda: RecentTurnsMemory(max_turns=None), id="recent-turns-no-window"),
 ]
 
 
@@ -206,6 +207,30 @@ class TestRecentTurnsMemory:
         result = memory.retrieve("q", at=NOW, budget_tokens=1)
 
         assert len(result.messages) == 1
+
+    def test_the_default_window_is_ten_turns(self):
+        memory = RecentTurnsMemory()
+        for i in range(30):
+            memory.write(record(i, f"m{i}"))
+
+        result = memory.retrieve("q", at=NOW, budget_tokens=10_000)
+
+        # The agent's own configuration, which ADR 0007 leaves unchanged.
+        assert [m["content"] for m in result.messages] == [f"m{i}" for i in range(10, 30)]
+
+    def test_without_a_window_only_the_budget_limits(self):
+        memory = RecentTurnsMemory(max_turns=None)
+        for i in range(30):
+            memory.write(record(i, "x" * 40))
+
+        everything = memory.retrieve("q", at=NOW, budget_tokens=10_000)
+        tight = memory.retrieve("q", at=NOW, budget_tokens=100)
+
+        # ADR 0007: the evaluation fills the budget instead of keeping the
+        # 20-message window.  Each record costs 10 approximate tokens.
+        assert len(everything.messages) == 30
+        assert tight.sources == tuple(make_record_id("s1", i) for i in range(20, 30))
+        assert tight.tokens_used == 100
 
     def test_end_session_is_a_no_op(self):
         memory = RecentTurnsMemory()
