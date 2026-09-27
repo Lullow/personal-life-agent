@@ -177,6 +177,12 @@ def distance_tokens(records: list[MemoryRecord], evidence: set[str], counter: To
 
 # -- one question ------------------------------------------------------------
 
+def answer_messages(x: dict, retrieval: Retrieval) -> list[dict[str, str]]:
+    """ADR 0008: the recalled messages unchanged, then the question with its date."""
+    question = {"role": "user", "content": f"Current date: {x['question_date']}\nQuestion: {x['question']}"}
+    return [*retrieval.messages, question]
+
+
 def ask(client: RecordingLLMClient, system_prompt: str,
         messages: list[dict[str, str]]) -> tuple[dict | None, int]:
     for attempt in range(1, ATTEMPTS + 1):
@@ -223,8 +229,7 @@ def run_question(x: dict, position: int, strategy: Callable[[TokenCounter], Conv
         row["recall_list_order"] = recall_precision(listed.sources, listed_evidence)[0]
         row["evidence_reached_list_order"] = bool(set(listed.sources) & listed_evidence)
 
-    question = {"role": "user", "content": f"Current date: {x['question_date']}\nQuestion: {x['question']}"}
-    reply, row["answer_attempts"] = ask(answer_llm, ANSWER_SYSTEM_PROMPT, [*retrieval.messages, question])
+    reply, row["answer_attempts"] = ask(answer_llm, ANSWER_SYSTEM_PROMPT, answer_messages(x, retrieval))
     row.update(answer=None, answer_is_string=None, verdict=None, correct=None, grade_attempts=0, status="error")
     if reply is not None:
         # ADR 0008: a reply in the wrong shape is still an answer; the grader sees all of it.
