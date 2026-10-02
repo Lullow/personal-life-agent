@@ -85,6 +85,11 @@ behind them are recorded in `docs/adr/`:
   `ApproxTokenCounter` is refused, as 0003 already decided.
 - The method section exists as a draft.
 
+Closed at the checkpoint on Friday 2 October, three days late. The harness,
+the pilot run, ADRs 0004–0009 and N (ADR 0010) are done. The method section is
+not: `docs/method.md` holds one sentence. It is not finished before M2 starts;
+the points each ADR requires are written alongside M2.
+
 **M2 — two strategies compared (step 5, first half). Done by Friday
 2 October.**
 
