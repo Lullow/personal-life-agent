@@ -3,8 +3,10 @@
 Two kinds of test live here.  :class:`TestMemoryContract` is parametrised over
 every strategy and asserts the rules that hold for all of them — it is the
 harness the next two implementations plug into, and a strategy that cannot pass
-it is not finished.  The rest test :class:`RecentTurnsMemory` specifically,
-including the window behaviour the conversation loop used to implement itself.
+it is not finished.  The rest test one strategy each:
+:class:`RecentTurnsMemory`, including the window behaviour the conversation
+loop used to implement itself, and :class:`RetrievalMemory`, whose rules are
+those of ADR 0011.
 """
 
 from datetime import datetime, timedelta
@@ -15,17 +17,21 @@ from life_agent.agent.memory import (
     ApproxTokenCounter,
     MemoryRecord,
     RecentTurnsMemory,
+    RetrievalMemory,
     make_record_id,
 )
 
 NOW = datetime(2026, 9, 6, 12, 0, 0)
 LATER = NOW + timedelta(hours=1)
 
-# Every strategy, built fresh.  Add the next two here and the contract below
-# starts applying to them without a line of new test code.
+# Every strategy, built fresh.  Add the last one here and the contract below
+# starts applying to it without a line of new test code.  Each query shares a
+# word with the record it expects back: a strategy that recalls by relevance
+# owes nothing to a query that matches nothing.
 STRATEGIES = [
     pytest.param(lambda: RecentTurnsMemory(max_turns=10), id="recent-turns"),
     pytest.param(lambda: RecentTurnsMemory(max_turns=None), id="recent-turns-no-window"),
+    pytest.param(lambda: RetrievalMemory(), id="retrieval"),
 ]
 
 
@@ -91,7 +97,7 @@ class TestMemoryContract:
         memory.write(record(0, "before", at=NOW))
         memory.write(record(1, "after", at=LATER))
 
-        result = memory.retrieve("q", at=NOW, budget_tokens=1000)
+        result = memory.retrieve("before or after", at=NOW, budget_tokens=1000)
 
         contents = [m["content"] for m in result.messages]
         assert "before" in contents
@@ -100,7 +106,7 @@ class TestMemoryContract:
     def test_the_cutoff_is_inclusive_of_its_own_instant(self, memory):
         memory.write(record(0, "exactly now", at=NOW))
 
-        result = memory.retrieve("q", at=NOW, budget_tokens=1000)
+        result = memory.retrieve("now", at=NOW, budget_tokens=1000)
 
         assert [m["content"] for m in result.messages] == ["exactly now"]
 
@@ -112,7 +118,7 @@ class TestMemoryContract:
 
         memory.end_session()
 
-        result = memory.retrieve("vad sparade jag?", at=LATER, budget_tokens=1000)
+        result = memory.retrieve("what was saved?", at=LATER, budget_tokens=1000)
         # Verbatim: the database had the last word, and a strategy that
         # paraphrases it during consolidation has broken that.
         assert "Saved 4 item(s)" in [m["content"] for m in result.messages]
@@ -120,7 +126,7 @@ class TestMemoryContract:
     def test_sources_accompany_the_messages(self, memory):
         memory.write(record(0, "hej"))
 
-        result = memory.retrieve("q", at=NOW, budget_tokens=1000)
+        result = memory.retrieve("hej", at=NOW, budget_tokens=1000)
 
         assert result.messages
         assert result.sources
@@ -129,7 +135,7 @@ class TestMemoryContract:
     def test_recall_reports_what_it_spent(self, memory):
         memory.write(record(0, "a message with some length to it"))
 
-        result = memory.retrieve("q", at=NOW, budget_tokens=1000)
+        result = memory.retrieve("message", at=NOW, budget_tokens=1000)
 
         assert result.tokens_used > 0
 
@@ -137,7 +143,7 @@ class TestMemoryContract:
         for i in range(10):
             memory.write(record(i, f"message number {i} with padding"))
 
-        result = memory.retrieve("q", at=NOW, budget_tokens=5)
+        result = memory.retrieve("message", at=NOW, budget_tokens=5)
 
         # One oversized record may still come back alone — returning nothing
         # would be worse — but anything beyond that has to fit.
@@ -234,6 +240,148 @@ class TestRecentTurnsMemory:
 
     def test_end_session_is_a_no_op(self):
         memory = RecentTurnsMemory()
+        memory.write(record(0, "hej"))
+        memory.end_session()
+
+        assert [r.content for r in memory.records] == ["hej"]
+
+
+# ---------------------------------------------------------------------------
+# RetrievalMemory — BM25 over every record, shown in the order it was said
+# ---------------------------------------------------------------------------
+
+
+class TestRetrievalMemory:
+    def test_the_record_that_shares_words_with_the_query_is_recalled(self):
+        memory = RetrievalMemory()
+        memory.write(record(0, "My cat is called Miso"))
+        memory.write(record(1, "The weather is nice today"))
+
+        # Room for either record, 6 and 7 approximate tokens, but not for both.
+        result = memory.retrieve("What is my cat called?", at=NOW, budget_tokens=7)
+
+        assert [m["content"] for m in result.messages] == ["My cat is called Miso"]
+
+    def test_a_rare_word_counts_for_more_than_a_common_one(self):
+        memory = RetrievalMemory()
+        memory.write(record(0, "Lisbon was sunny"))
+        memory.write(record(1, "talk about weather"))
+        memory.write(record(2, "talk about dinner"))
+        memory.write(record(3, "talk about sports"))
+
+        result = memory.retrieve("about Lisbon", at=NOW, budget_tokens=5)
+
+        assert result.sources == (make_record_id("s1", 0),)
+
+    def test_messages_come_back_in_the_order_they_were_written(self):
+        memory = RetrievalMemory()
+        memory.write(record(0, "the gym costs 20"))
+        memory.write(record(1, "see you tomorrow", role="assistant"))
+        memory.write(record(2, "my gym membership price went up to 30"))
+
+        result = memory.retrieve("gym membership price", at=NOW, budget_tokens=1000)
+
+        # The later record is the better match, and still comes last: order is
+        # the only thing that tells the model which value is the newer one.
+        assert [m["content"] for m in result.messages] == [
+            "the gym costs 20",
+            "my gym membership price went up to 30",
+        ]
+        assert result.sources == (make_record_id("s1", 0), make_record_id("s1", 2))
+
+    def test_a_record_that_shares_no_word_is_never_recalled(self):
+        memory = RetrievalMemory()
+        memory.write(record(0, "see you tomorrow"))
+
+        result = memory.retrieve("gym membership price", at=NOW, budget_tokens=1000)
+
+        assert result.messages == []
+        assert result.tokens_used == 0
+
+    def test_a_record_too_large_is_passed_over_and_the_walk_goes_on(self):
+        memory = RetrievalMemory()
+        memory.write(record(0, "cat " * 200))
+        memory.write(record(1, "my cat"))
+
+        result = memory.retrieve("cat", at=NOW, budget_tokens=50)
+
+        # The long record ranks first and costs 200 approximate tokens.
+        assert [m["content"] for m in result.messages] == ["my cat"]
+        assert result.tokens_used <= 50
+
+    def test_an_oversized_record_does_not_come_back_alone(self):
+        memory = RetrievalMemory()
+        memory.write(record(0, "cat " * 200))
+
+        result = memory.retrieve("cat", at=NOW, budget_tokens=50)
+
+        # Unlike the baseline: every strategy gets the same allowance, so this
+        # one never spends more than it.
+        assert result.messages == []
+
+    def test_equal_scores_go_to_the_record_written_later(self):
+        memory = RetrievalMemory()
+        memory.write(record(0, "blue bike"))
+        memory.write(record(1, "blue bike"))
+
+        result = memory.retrieve("bike", at=NOW, budget_tokens=3)
+
+        assert result.sources == (make_record_id("s1", 1),)
+
+    def test_a_later_record_does_not_move_the_ranking(self):
+        memory = RetrievalMemory()
+        memory.write(record(0, "alpha"))
+        memory.write(record(1, "gamma"))
+        for i in range(2, 6):
+            memory.write(record(i, "gamma", at=LATER))
+
+        result = memory.retrieve("alpha gamma", at=NOW, budget_tokens=2)
+
+        # Seen from NOW the two words are equally rare, so the tie goes to the
+        # later record.  Counting the records stamped LATER would make "gamma"
+        # common and hand the single place to "alpha".
+        assert result.sources == (make_record_id("s1", 1),)
+
+    def test_matching_ignores_case_and_punctuation(self):
+        memory = RetrievalMemory()
+        memory.write(record(0, "Träna RYGG!"))
+
+        for query in ("rygg", "TRÄNA", "träna, rygg?"):
+            result = memory.retrieve(query, at=NOW, budget_tokens=1000)
+            assert result.sources == (make_record_id("s1", 0),)
+
+    def test_an_inflected_word_does_not_match(self):
+        memory = RetrievalMemory()
+        memory.write(record(0, "graduated"))
+
+        result = memory.retrieve("graduate", at=NOW, budget_tokens=1000)
+
+        # No stemming: the matching is lexical, and the report says so.
+        assert result.messages == []
+
+    def test_assistant_turns_are_recalled_too(self):
+        memory = RetrievalMemory()
+        memory.write(record(0, "the recipe needs saffron", role="assistant"))
+
+        result = memory.retrieve("saffron", at=NOW, budget_tokens=1000)
+
+        assert result.messages == [
+            {"role": "assistant", "content": "the recipe needs saffron"}
+        ]
+
+    def test_an_outcome_is_recalled_only_when_it_matches(self):
+        memory = RetrievalMemory()
+        memory.write(record(0, "Saved 4 item(s)", role="assistant", kind="outcome"))
+
+        missed = memory.retrieve("träna imorgon", at=NOW, budget_tokens=1000)
+        found = memory.retrieve("saved", at=NOW, budget_tokens=1000)
+
+        # Kept verbatim, but ranked like any other record.
+        assert missed.messages == []
+        assert [m["content"] for m in found.messages] == ["Saved 4 item(s)"]
+
+    def test_end_session_is_a_no_op(self):
+        memory = RetrievalMemory()
         memory.write(record(0, "hej"))
         memory.end_session()
 

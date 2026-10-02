@@ -44,7 +44,9 @@ pytest tests/test_conversation_agent.py::TestEditFlows -v
 pip install -e '.[eval]'
 .venv/bin/python evals/longmemeval.py --dry-run     # offline: replay, recall, token counts
 .venv/bin/python evals/longmemeval.py               # 10 per type; calls the model, costs money
+.venv/bin/python evals/longmemeval.py --strategy retrieval --dry-run   # RetrievalMemory, offline
 .venv/bin/python evals/verify_adr_numbers.py        # recompute every figure in ADRs 0004–0009
+.venv/bin/python evals/verify_adr_0011.py           # the same for ADR 0011
 
 # Run
 python -m life_agent chat
@@ -221,14 +223,16 @@ class ConversationMemory(Protocol):
     def end_session(self) -> None: ...
 ```
 
-Three implementations, in this order. Only `RecentTurnsMemory` is built; the
-other two come in step 5 (`docs/vg-project.md`).
+Three implementations, in this order. `RecentTurnsMemory` and
+`RetrievalMemory` are built; the third comes in step 5 (`docs/vg-project.md`).
 
 1. `RecentTurnsMemory` — **built.** The last N turns, windowed at retrieve. The
    agent's default, and the baseline.
-2. `RetrievalMemory` — **not built.** Top-k over everything, with no way to
-   overwrite stale facts. **This is intentional** — it is what the baseline
-   should fail at.
+2. `RetrievalMemory` — **built.** BM25 over everything, filling the budget in
+   rank order and returning the messages in the order they were written, with
+   no way to overwrite stale facts. **This is intentional** — it is what the
+   baseline should fail at. Its rules, constants included, are fixed by ADR
+   0011 and are not tuned to a result.
 3. `ConsolidatingMemory` — **not built.** Rolling summary plus a recent window.
 
 ### Rules that hold across all implementations
@@ -293,5 +297,5 @@ The evaluation must therefore run **headless**: `evals/longmemeval.py` must
 drive the memory module through a thin harness, not through
 `ConversationAgent.send()`, and the agent must never appear in the measured
 path. It reads its questions from `evals/longmemeval_questions.json` and its
-replay rules from `evals/verify_adr_numbers.py`; ADRs 0004–0009 are its
+replay rules from `evals/verify_adr_numbers.py`; ADRs 0004–0009 and 0011 are its
 specification.

@@ -1,10 +1,11 @@
-"""Run a memory strategy headless on LongMemEval, under ADRs 0004–0009.
+"""Run a memory strategy headless on LongMemEval, under ADRs 0004–0009 and 0011.
 
 Each question's history is replayed into a fresh strategy (0004), recalled at
 23:59 on the question's day, answered by the model from what came back, and
 graded (0008). Per question it logs recall and precision (0009), the distance
 from the newest evidence to the question (0005), the tokens recalled against
-the budget (0007), and what every model call cost (0006). The agent is never
+the budget (0007), and what every model call cost (0006). For RetrievalMemory
+it also logs recall with only the user turns written (0011). The agent is never
 in the path: no ConversationAgent, no prompts.py.
 
 The questions and their order come from evals/longmemeval_questions.json
@@ -14,6 +15,7 @@ data/longmemeval/runs/ as JSON lines, one per question, written as they finish.
     .venv/bin/python evals/longmemeval.py --dry-run         # no model calls, no key needed
     .venv/bin/python evals/longmemeval.py                   # the M1 pilot, 10 per type; costs money
     .venv/bin/python evals/longmemeval.py --per-type 30
+    .venv/bin/python evals/longmemeval.py --strategy retrieval --dry-run
 
 --dry-run runs everything except the network. The answer call's prompt, and so
 its input tokens, is exactly what a real run sends; the answers and verdicts
@@ -41,7 +43,7 @@ from evals.verify_adr_numbers import (  # noqa: E402
 )
 from life_agent.agent.memory import (  # noqa: E402
     DEFAULT_BUDGET_TOKENS, ApproxTokenCounter, ConversationMemory, MemoryRecord,
-    RecentTurnsMemory, Retrieval, TokenCounter, make_record_id,
+    RecentTurnsMemory, Retrieval, RetrievalMemory, TokenCounter, make_record_id,
 )
 from life_agent.agent.recording import LLMCall, RecordingLLMClient  # noqa: E402
 from life_agent.config import get_settings  # noqa: E402
@@ -68,7 +70,11 @@ GRADE_SYSTEM_PROMPT = 'Reply with a JSON object: {"verdict": "yes"} or {"verdict
 STRATEGIES: dict[str, Callable[[TokenCounter], ConversationMemory]] = {
     # ADR 0007: no turn window; the budget is the only limit.
     "recent-turns": lambda counter: RecentTurnsMemory(max_turns=None, token_counter=counter),
+    # ADR 0011: BM25 over every record, built with the counter and nothing else.
+    "retrieval": lambda counter: RetrievalMemory(token_counter=counter),
 }
+# ADR 0011: the strategies whose recall is also computed with only user turns written.
+USER_TURN_RECALL = ("retrieval",)
 
 
 class DryRunClient:
@@ -119,21 +125,28 @@ def git_commit() -> str:
 
 # -- replay and recall -------------------------------------------------------
 
-def replay(memory: ConversationMemory, records: list[MemoryRecord], ends: set[int]) -> None:
-    """Write every record; end the session after each session's last one (ADR 0004)."""
+def replay(memory: ConversationMemory, records: list[MemoryRecord], ends: set[int],
+           roles: tuple[str, ...] | None = None) -> None:
+    """Write every record; end the session after each session's last one (ADR 0004).
+
+    With *roles*, only records of those roles are written (ADR 0011's secondary
+    figure). The session boundaries stay where they were.
+    """
     for k, record in enumerate(records, start=1):
-        memory.write(record)
+        if roles is None or record.role in roles:
+            memory.write(record)
         if k in ends:
             memory.end_session()
 
 
 def recall_of(x: dict, order: str, strategy: Callable[[TokenCounter], ConversationMemory],
-              counter: TokenCounter) -> tuple[Retrieval, set[str], list[MemoryRecord]]:
+              counter: TokenCounter, roles: tuple[str, ...] | None = None,
+              ) -> tuple[Retrieval, set[str], list[MemoryRecord]]:
     records, ends, evidence = build_records(x, order)
     if len({r.id for r in records}) != len(records):
         raise ValueError(f"{x['question_id']}: two records share an id (ADR 0004)")
     memory = strategy(counter)
-    replay(memory, records, ends)
+    replay(memory, records, ends, roles)
     retrieval = memory.retrieve(x["question"], at=question_time(x), budget_tokens=DEFAULT_BUDGET_TOKENS)
     # The budget counts the content of what came back and nothing else (ADR 0006).
     # A strategy that fell back on its own default counter shows up here.
@@ -218,6 +231,9 @@ def run_question(x: dict, position: int, strategy: Callable[[TokenCounter], Conv
         "ku_breakdown": None,
         "recall_list_order": None,
         "evidence_reached_list_order": None,
+        # ADR 0011: only for a strategy that ranks; E stays as the dataset marks it.
+        "recall_user_turns": None,
+        "evidence_reached_user_turns": None,
         "distance_tokens": distance,
         "long_term": distance > DEFAULT_BUDGET_TOKENS,
         "history_tokens": sum(counter.count(r.content) for r in records),
@@ -228,6 +244,10 @@ def run_question(x: dict, position: int, strategy: Callable[[TokenCounter], Conv
         listed, listed_evidence, _ = recall_of(x, "list", strategy, counter)
         row["recall_list_order"] = recall_precision(listed.sources, listed_evidence)[0]
         row["evidence_reached_list_order"] = bool(set(listed.sources) & listed_evidence)
+    if meta["strategy"] in USER_TURN_RECALL:
+        users, _, _ = recall_of(x, "clock", strategy, counter, roles=("user",))
+        row["recall_user_turns"] = recall_precision(users.sources, evidence)[0]
+        row["evidence_reached_user_turns"] = bool(set(users.sources) & evidence)
 
     reply, row["answer_attempts"] = ask(answer_llm, ANSWER_SYSTEM_PROMPT, answer_messages(x, retrieval))
     row.update(answer=None, answer_is_string=None, verdict=None, correct=None, grade_attempts=0, status="error")
@@ -283,7 +303,13 @@ def summarize(rows: list[dict], pool_distances: dict[str, list[int]], dry_run: b
                 ("recall, list order, mean", f"{mean(r['recall_list_order'] for r in rs):.3f}"),
                 ("evidence reached, list order", f"{sum(r['evidence_reached_list_order'] for r in rs)} of {n}"),
             ]
+        if rs[0]["recall_user_turns"] is not None:
+            lines += [
+                ("recall, user turns only, mean", f"{mean(r['recall_user_turns'] for r in rs):.3f}"),
+                ("evidence reached, user turns only", f"{sum(r['evidence_reached_user_turns'] for r in rs)} of {n}"),
+            ]
         lines += [
+            ("messages recalled, mean / max", f"{mean(len(r['sources']) for r in rs):,.0f} / {max(len(r['sources']) for r in rs):,}"),
             ("tokens_used, mean / max", f"{mean(r['tokens_used'] for r in rs):,.0f} / {max(r['tokens_used'] for r in rs):,}"),
             ("over budget", f"{sum(r['over_budget'] for r in rs)}"),
             ("long-term, sample / whole list",
