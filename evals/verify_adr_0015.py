@@ -1,4 +1,4 @@
-"""Recompute the figures in ADR 0015 from the pinned dataset, the M2 rows and the smoke test.
+"""Recompute the figures in ADRs 0015 and 0016 from the pinned dataset, the M2 rows and the smoke tests.
 
 The figures describe the sessions the consolidator will read: how many there
 are, how large the largest is, how many calls the two replay orders take, and
@@ -28,15 +28,17 @@ from life_agent.agent.memory import CONSOLIDATION_SYSTEM_PROMPT, SUMMARY_TARGET_
 RESULTS = Path(__file__).resolve().parent / "results"
 M2_RUNS = ("retrieval-20261002-193417.jsonl", "recent-turns-20261002-193902.jsonl")
 SMOKE = "consolidating-20261003-192859-smoke.jsonl"  # the run under 0012 that 0015 reopens it for
+SMOKE_2 = "consolidating-20261003-205346-smoke.jsonl"  # the run under 0015 that 0016 reopens its failure rule for
+FAILURES_2 = "failures-20261003-214031-smoke.log"  # the same question rerun with the diagnosing wrapper: the raw failed replies
 SECONDS_PER_CALL = 8  # the six-session check under the stricter prompt, measured in session
 SUMMARY_TOKENS = 1000  # the S ADR 0012 fixes
 WORDS_ASKED = 750      # what the prompt asks the model for
 
 
-def adr_text() -> str:
-    paths = sorted(ADR_DIR.glob("0015-*.md"))
+def adr_text(number: str = "0015") -> str:
+    paths = sorted(ADR_DIR.glob(f"{number}-*.md"))
     if not paths:
-        raise SystemExit("no ADR 0015 to check")
+        raise SystemExit(f"no ADR {number} to check")
     return paths[0].read_text(encoding="utf-8")
 
 
@@ -74,6 +76,9 @@ def compute(text: str) -> dict:
         calls_per_run.append(sum(len(r["calls"]) for r in rows))
     smoke = json.loads((RESULTS / SMOKE).read_text(encoding="utf-8").splitlines()[0])
     outs = [k["output_tokens"] for k in smoke["calls"] if k["label"] == "consolidate"]
+    second = [json.loads(line) for line in (RESULTS / SMOKE_2).read_text(encoding="utf-8").splitlines()]
+    failed_calls = [k for r in second for k in r["calls"] if k["failed"]]
+    first_failure = json.loads((RESULTS / FAILURES_2).read_text(encoding="utf-8").splitlines()[0])
     c = cost()
     design = c["grid"][(CHOSEN_N, CONSOLIDATOR, SUMMARY_TOKENS)]
     return dict(histories=len(sessions_per_history), sessions=sum(sessions_per_history),
@@ -90,7 +95,14 @@ def compute(text: str) -> dict:
                 smoke_growth=(outs[-1] - outs[0]) / (len(outs) - 1), smoke_summary=smoke["summary_tokens"],
                 smoke_sources=len(smoke["sources"]), smoke_over=smoke["over_budget"], smoke_correct=smoke["correct"],
                 smoke_cost=smoke["strategy_cost_usd"],
-                hours_one_thread=(sum(sessions_per_history) + list_order) * SECONDS_PER_CALL / 3600)
+                hours_one_thread=(sum(sessions_per_history) + list_order) * SECONDS_PER_CALL / 3600,
+                second_ids=[r["question_id"] for r in second],
+                second_errors=[r["error"] for r in second],
+                second_list_errors=[r.get("list_order_error") for r in second],
+                failed_inputs={k["input_tokens"] for k in failed_calls if k["label"] == "consolidate"},
+                failed_by_row=[sum(k["failed"] for k in r["calls"]) for r in second],
+                loop_chars=len(first_failure["raw"]), loop_words=len(first_failure["raw"].split()),
+                loop_phrase='"Isis Unveiled"' in first_failure["raw"][-200:])
 
 
 def claims(f: dict) -> list[Claim]:
@@ -138,15 +150,35 @@ def claims(f: dict) -> list[Claim]:
     ]
 
 
+def claims_0016(f: dict) -> list[Claim]:
+    ssu, ku = f["second_ids"]
+    return [
+        Claim("0016", "first failure: question and session", r"On `([0-9a-f]{8})` the consolidator failed three times on the\s+session `(\w+)`",
+              (ssu, f["second_errors"][0].split("'")[1]) if f["second_errors"][0] else (ssu, "?")),
+        Claim("0016", "first failure: input tokens", r"with ([\d,]+) input tokens each time",
+              (min(f["failed_inputs"]),), note=f"failed inputs {sorted(f['failed_inputs'])}"),
+        Claim("0016", "the looping reply: chars, words", r"was ([\d,]+) characters and ([\d,]+) words",
+              (f["loop_chars"], f["loop_words"])),
+        Claim("0016", "the looping reply repeats the phrase", r"\"Isis Unveiled\" \\t, \\t\"Isis Unveiled\"", f["loop_phrase"]),
+        Claim("0016", "second history: list-order failure session", r"On `([0-9a-f]{8})` the list-order replay failed the same way on\s+`(\w+)`",
+              (ku, (f["second_list_errors"][1] or f["second_errors"][1]).split("'")[1])),
+        Claim("0016", "second history: one failure passed on retry", r"had one failure that passed\s+on the second attempt",
+              f["failed_by_row"][1] == 4, note=f"failed calls per row {f['failed_by_row']}: 3 in the list chain, 1 in the clock chain"),
+    ]
+
+
 def main() -> int:
     raw = adr_text()
     text = re.sub(r"\s+", " ", raw)
-    cs = claims(compute(raw))
-    for c in cs:
-        judge(c, text)
+    f = compute(raw)
+    cs = claims(f)
+    text_0016 = re.sub(r"\s+", " ", adr_text("0016"))
+    cs_0016 = claims_0016(f)
+    for c, body in [(c, text) for c in cs] + [(c, text_0016) for c in cs_0016]:
+        judge(c, body)
         print(f"{c.status:12s} {c.label:44s} text {fmt(c.groups) if c.groups else '—':34s} "
               f"computed {fmt(c.computed)}{'  ' + c.note if c.note else ''}")
-    tally = Counter(c.status for c in cs)
+    tally = Counter(c.status for c in cs + cs_0016)
     print("\n" + ", ".join(f"{k}: {v}" for k, v in sorted(tally.items())))
     return 1 if tally.get("DIFF") or tally.get("TEXT MISSING") else 0
 

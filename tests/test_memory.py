@@ -23,7 +23,6 @@ from life_agent.agent.memory import (
     SUMMARY_TARGET_TOKENS,
     ApproxTokenCounter,
     ConsolidatingMemory,
-    ConsolidationError,
     MemoryRecord,
     RecentTurnsMemory,
     RetrievalMemory,
@@ -666,23 +665,53 @@ class TestConsolidatingMemory:
         assert len(llm.calls) == CONSOLIDATION_ATTEMPTS
         assert memory.records[-1].content == "third time"
 
-    def test_when_every_attempt_fails_nothing_is_summarised_or_lost(self):
+    def test_when_every_attempt_fails_the_session_is_skipped(self):
         memory, llm = consolidating(None, None, None)
         memory.write(record(0, "one"))
 
-        with pytest.raises(ConsolidationError):
-            memory.end_session()
+        memory.end_session()
 
+        # ADR 0016: no summary, nothing lost, and the skip is on record.
         assert len(llm.calls) == CONSOLIDATION_ATTEMPTS
         assert [r.kind for r in memory.records] == ["message"]
         assert shown(memory.retrieve("one", at=NOW, budget_tokens=1000)) == ["one"]
+        (c,) = memory.consolidations
+        assert (c.session_id, c.tokens, c.failed) == ("s1", 0, True)
+
+    def test_a_skipped_session_is_not_carried_into_the_next_call(self):
+        memory, llm = consolidating(None, None, None, {"summary": "notes of s2"})
+        memory.write(record(0, "the looping session"))
+        memory.end_session()
+        memory.write(record(0, "a later session", session_id="s2"))
+        memory.end_session()
+
+        last = llm.calls[-1][1][0]["content"]
+        assert "the looping session" not in last
+        assert "Notes so far:\n(none)" in last
+        summary = memory.records[-1]
+        assert summary.content == "notes of s2"
+        assert summary.derived_from == (make_record_id("s2", 0),)
+
+    def test_a_skipped_session_leaves_the_notes_as_they_were(self):
+        memory, _ = consolidating({"summary": "first notes"}, None, None, None)
+        memory.write(record(0, "one"))
+        memory.end_session()
+        memory.write(record(0, "two", session_id="s2"))
+        memory.end_session()
+
+        result = memory.retrieve("anything", at=NOW, budget_tokens=1000)
+
+        assert shown(result) == ["first notes", "one", "two"]
+        assert [c.failed for c in memory.consolidations] == [False, True]
 
     def test_a_reply_without_a_string_summary_is_a_failure(self):
-        memory, _ = consolidating({"summary": 5}, {"notes": "x"}, {"summary": "  "})
+        memory, llm = consolidating({"summary": 5}, {"notes": "x"}, {"summary": "  "})
         memory.write(record(0, "one"))
 
-        with pytest.raises(ConsolidationError):
-            memory.end_session()
+        memory.end_session()
+
+        assert len(llm.calls) == CONSOLIDATION_ATTEMPTS
+        assert memory.consolidations[0].failed
 
     # -- the size holds (0015) --
 
@@ -731,16 +760,18 @@ class TestConsolidatingMemory:
 
         assert memory.records[-1].content == "b" * 15 + "."
 
-    def test_a_failed_second_call_is_tried_again_and_then_raises(self, monkeypatch):
-        monkeypatch.setattr(memory_module, "SUMMARY_TARGET_TOKENS", 5)
-        memory, llm = consolidating({"summary": "too long by far"}, None, None, None, counter=CharCounter())
+    def test_a_failed_second_call_falls_back_on_the_first_reply_cut(self, monkeypatch):
+        monkeypatch.setattr(memory_module, "SUMMARY_TARGET_TOKENS", 12)
+        memory, llm = consolidating({"summary": "Too long. By far."}, None, None, None, counter=CharCounter())
         memory.write(record(0, "hej"))
 
-        with pytest.raises(ConsolidationError):
-            memory.end_session()
+        memory.end_session()
 
+        # ADR 0016: the first reply was valid notes, only too long.
         assert len(llm.calls) == 1 + CONSOLIDATION_ATTEMPTS
-        assert [r.kind for r in memory.records] == ["message"]
+        assert memory.records[-1].content == "Too long."
+        (c,) = memory.consolidations
+        assert (c.reasked, c.truncated, c.failed) == (True, True, False)
 
     def test_the_summary_never_takes_more_than_s_of_the_budget(self, monkeypatch):
         monkeypatch.setattr(memory_module, "SUMMARY_TARGET_TOKENS", 10)

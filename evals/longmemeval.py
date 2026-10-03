@@ -1,4 +1,4 @@
-"""Run a memory strategy headless on LongMemEval, under ADRs 0004–0009, 0011 and 0013–0015.
+"""Run a memory strategy headless on LongMemEval, under ADRs 0004–0009, 0011 and 0013–0016.
 
 Each question's history is replayed into a fresh strategy (0004), recalled at
 23:59 on the question's day, answered by the model from what came back, and
@@ -58,7 +58,7 @@ from life_agent.agent.memory import (  # noqa: E402
 )
 from life_agent.agent.recording import LLMCall, RecordingLLMClient  # noqa: E402
 from life_agent.config import get_settings  # noqa: E402
-from life_agent.llm.client import LLMClient  # noqa: E402
+from life_agent.llm.client import LLMClient, _extract_json  # noqa: E402
 
 QUESTIONS = ROOT / "evals" / "longmemeval_questions.json"
 RUNS = ROOT / "data" / "longmemeval" / "runs"
@@ -139,7 +139,45 @@ def load_questions(per_type: int) -> dict[str, list[str]]:
     return {t: doc[t] for t in TYPES}
 
 
-def real_client(model: str = MODEL) -> LLMClient:
+FAILURES = RUNS / "failures.log"
+
+
+class DiagnosedClient:
+    """``chat_json`` with the same contract as ``LLMClient``'s, plus a line per failure.
+
+    ``LLMClient.chat_json`` returns None for a network error, a provider error
+    and an unparseable reply alike (0008). A rerun under 0008 needs to know
+    which, so every failure is appended to data/longmemeval/runs/failures.log
+    with the model, the exception or the raw text, and the first line of the
+    message that provoked it. The call itself is unchanged.
+    """
+
+    def __init__(self, inner: LLMClient) -> None:
+        self._inner = inner
+        self.model = inner.model
+
+    def chat_json(self, system_prompt: str, messages: list[dict[str, str]]) -> dict | None:
+        raw: str | None = None
+        try:
+            raw = self._inner._chat_completion_messages(system_prompt, messages, json_mode=True)
+            result = _extract_json(raw)
+        except Exception as e:  # noqa: BLE001 — the client's own contract swallows everything
+            result, raw = None, f"{type(e).__name__}: {str(e)[:500]}"
+            body = getattr(e, "read", None)
+            if callable(body):
+                try:
+                    raw += " " + body().decode("utf-8", "replace")[:800]
+                except Exception:  # noqa: BLE001
+                    pass
+        if result is None:
+            head = (messages[-1]["content"] if messages else "")[:120].replace("\n", " ")
+            with FAILURES.open("a", encoding="utf-8") as f:
+                f.write(json.dumps({"at": datetime.now().isoformat(timespec="seconds"), "model": self.model,
+                                    "input_head": head, "raw": raw}, ensure_ascii=False) + "\n")
+        return result
+
+
+def real_client(model: str = MODEL) -> DiagnosedClient:
     s = get_settings()
     client = LLMClient(api_key=s.llm_api_key, base_url=s.llm_base_url, model=model,
                        provider=s.llm_provider, timeout=60.0)
@@ -147,7 +185,7 @@ def real_client(model: str = MODEL) -> LLMClient:
         raise SystemExit("no model configured: set LIFE_AGENT_LLM_BASE_URL and _API_KEY, or use --dry-run")
     if "openrouter.ai" not in (client.base_url or ""):
         raise SystemExit(f"ADR 0008 answers and grades through OpenRouter, not {client.base_url}")
-    return client
+    return DiagnosedClient(client)
 
 
 def git_commit() -> str:
@@ -283,11 +321,11 @@ def run_question(x: dict, position: int, name: str, counter: TokenCounter,
                      "evidence_reached", "ku_breakdown", "recall_list_order", "evidence_reached_list_order",
                      "recall_user_turns", "evidence_reached_user_turns", "evidence_consolidated",
                      "evidence_consolidated_or_reached", "ku_breakdown_consolidated", "summary_tokens",
-                     "summary", "summary_reasked", "summary_truncated", "consolidations",
+                     "summary", "summary_reasked", "summary_truncated", "consolidations", "consolidations_failed",
                      "distance_tokens", "long_term", "history_tokens", "records")
     row.update(dict.fromkeys(recall_fields))
     row.update(answer_attempts=0, answer=None, answer_is_string=None, verdict=None, correct=None,
-               grade_attempts=0, status="error", error=None)
+               grade_attempts=0, status="error", error=None, list_order_error=None)
 
     try:
         retrieval, evidence, records, memory = recall_of(x, "clock", build, counter)
@@ -312,14 +350,28 @@ def run_question(x: dict, position: int, name: str, counter: TokenCounter,
         if x["question_type"] == KU:
             row["ku_breakdown"] = ku_breakdown(x, retrieval.sources)
             if name not in MODEL_CALL_STRATEGIES or position < PILOT_PER_TYPE:
-                listed, listed_evidence, _, _ = recall_of(x, "list", build_list, counter)
-                row["recall_list_order"] = recall_precision(listed.sources, listed_evidence)[0]
-                row["evidence_reached_list_order"] = bool(set(listed.sources) & listed_evidence)
+                # A secondary figure: its consolidation failing leaves it None and
+                # does not void the question.
+                try:
+                    listed, listed_evidence, _, _ = recall_of(x, "list", build_list, counter)
+                except ConsolidationError as e:
+                    row["list_order_error"] = str(e)
+                else:
+                    row["recall_list_order"] = recall_precision(listed.sources, listed_evidence)[0]
+                    row["evidence_reached_list_order"] = bool(set(listed.sources) & listed_evidence)
         # ADR 0011: only for a strategy that ranks; E stays as the dataset marks it.
         if name in USER_TURN_RECALL:
             users, _, _, _ = recall_of(x, "clock", build, counter, roles=("user",))
             row["recall_user_turns"] = recall_precision(users.sources, evidence)[0]
             row["evidence_reached_user_turns"] = bool(set(users.sources) & evidence)
+        # ADR 0015, 0016: how often the size had to be held, and how many sessions
+        # the consolidator could not summarise. Only a strategy that consolidates has them.
+        done = getattr(memory, "consolidations", None)
+        if done is not None:
+            row["consolidations"] = len(done)
+            row["summary_reasked"] = sum(c.reasked for c in done)
+            row["summary_truncated"] = sum(c.truncated for c in done)
+            row["consolidations_failed"] = sum(c.failed for c in done)
         # ADR 0013: only for a strategy that summarises; C from its own records.
         shown = summaries_shown(memory, retrieval.sources)
         if shown:
@@ -328,12 +380,7 @@ def run_question(x: dict, position: int, name: str, counter: TokenCounter,
             row["evidence_consolidated"] = len(c & evidence) / len(evidence)
             row["evidence_consolidated_or_reached"] = bool(both & evidence)
             row["summary_tokens"] = sum(counter.count(s.content) for s in shown)
-            # ADR 0015: the text the model saw, and how often the size had to be held.
-            row["summary"] = "\n\n".join(s.content for s in shown)
-            done = getattr(memory, "consolidations", [])
-            row["consolidations"] = len(done)
-            row["summary_reasked"] = sum(c.reasked for c in done)
-            row["summary_truncated"] = sum(c.truncated for c in done)
+            row["summary"] = "\n\n".join(s.content for s in shown)  # the text the model saw (0015)
             if x["question_type"] == KU:
                 row["ku_breakdown_consolidated"] = ku_breakdown(x, both)
     except ConsolidationError as e:
@@ -435,9 +482,9 @@ def summarize(rows: list[dict], pool_distances: dict[str, list[int]], dry_run: b
                  f"{sum(r['evidence_consolidated_or_reached'] for r in summarised)} of {len(summarised)}"),
                 ("summary tokens, mean / max", f"{mean(r['summary_tokens'] for r in summarised):,.0f} / "
                  f"{max(r['summary_tokens'] for r in summarised):,}"),
-                ("consolidations asked again / cut / all (ADR 0015)",
+                ("consolidations asked again / cut / skipped / all (0015, 0016)",
                  f"{sum(r['summary_reasked'] for r in summarised)} / {sum(r['summary_truncated'] for r in summarised)}"
-                 f" / {sum(r['consolidations'] for r in summarised)}"),
+                 f" / {sum(r['consolidations_failed'] for r in summarised)} / {sum(r['consolidations'] for r in summarised)}"),
             ]
         lines += [
             ("messages recalled, mean / max", f"{mean(len(r['sources']) for r in measured):,.0f} / {max(len(r['sources']) for r in measured):,}"),

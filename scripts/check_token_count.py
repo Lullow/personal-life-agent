@@ -45,7 +45,7 @@ def main() -> int:
     retrieval, _, _, _ = recall_of(x, "clock", lambda c: STRATEGIES["recent-turns"](c, None), counter)
     messages = answer_messages(x, retrieval)
 
-    client = real_client()
+    client = real_client()._inner  # the LLMClient itself; this script patches its transport
     # chat_json drops the raw response and swallows errors; keep both.
     captured: dict = {}
     transport = client._post

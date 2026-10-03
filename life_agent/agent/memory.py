@@ -393,7 +393,8 @@ class Consolidator(Protocol):
 
 
 class ConsolidationError(RuntimeError):
-    """Every attempt to consolidate failed.  Nothing was summarised or lost."""
+    """Kept for callers that catch it; since ADR 0016 the strategy skips a
+    session it cannot summarise instead of raising."""
 
 
 def consolidation_message(previous: str | None, turns: list[MemoryRecord]) -> str:
@@ -432,12 +433,17 @@ def cut_to_tokens(text: str, limit: int, counter: TokenCounter) -> str:
 
 @dataclass(frozen=True)
 class Consolidation:
-    """What one :meth:`ConsolidatingMemory.end_session` did, for the evaluation's row."""
+    """What one :meth:`ConsolidatingMemory.end_session` did, for the evaluation's row.
+
+    ``failed`` means the session was skipped (ADR 0016): no summary was made,
+    the notes stayed as they were, and ``tokens`` is 0.
+    """
 
     session_id: str
     tokens: int
     reasked: bool
     truncated: bool
+    failed: bool = False
 
 
 class ConsolidatingMemory:
@@ -448,7 +454,7 @@ class ConsolidatingMemory:
     :class:`RetrievalMemory` would return both.  What it pays is a model call
     per session and a window S tokens smaller than the baseline's.
 
-    Its rules are decided in ADRs 0015, 0013 and 0014 and must not drift:
+    Its rules are decided in ADRs 0015, 0016, 0013 and 0014 and must not drift:
 
     * **Consolidation happens in** :meth:`end_session` **and nowhere else.**  One
       call reads the notes so far and the session's ``kind="message"`` records
@@ -460,6 +466,9 @@ class ConsolidatingMemory:
       after the last sentence end that fits.  Both are recorded in
       :attr:`consolidations`, since a cut summary is one the model did not
       make.  Under ADR 0012, which only asked, the model wrote eight times S.
+    * **A session the consolidator cannot summarise is skipped** (ADR 0016),
+      never fatal: the model loops at temperature 0 on some inputs, and the
+      loop returns on every attempt.  The skip is recorded too.
     * **Recall is the newest visible summary first, then the window.**  The
       summary is an assistant message; the raw records that fit in the rest of
       the budget follow in the order they were written, filled backwards from
@@ -534,9 +543,10 @@ class ConsolidatingMemory:
         """Rewrite the notes to cover the session that just ended.
 
         Nothing happens when no message was written since the last time.  If
-        every attempt fails the records stay as they are and
-        :class:`ConsolidationError` is raised, so a half-made summary never
-        reaches a context silently.
+        every attempt fails the session is skipped (ADR 0016): the records stay
+        as they are, the notes stay as they were, and the skip is recorded in
+        :attr:`consolidations`, so a half-made summary never reaches a context
+        and a failure never goes uncounted.
         """
         if not self._pending:
             return None
@@ -546,18 +556,19 @@ class ConsolidatingMemory:
             raise ValueError(f"a summary for session {session_id!r} already exists")
 
         previous = self._latest_summary
-        text = self._ask(
-            session_id,
-            consolidation_message(previous.content if previous else None, self._pending),
-        )
+        text = self._ask(consolidation_message(previous.content if previous else None, self._pending))
+        if text is None:
+            # ADR 0016: the session is skipped.  The notes stay as they were,
+            # the turns stay raw, and derived_from is not extended with them.
+            self._consolidations.append(Consolidation(session_id, 0, False, False, failed=True))
+            self._pending = []
+            return None
         # ADR 0015: over S, ask once more with the number; still over, cut.
+        # ADR 0016: an ask-again that fails falls back on the first reply.
         reasked = truncated = False
         if self._counter.count(text) > SUMMARY_TARGET_TOKENS:
             reasked = True
-            text = self._ask(
-                session_id,
-                CONSOLIDATION_REASK_MESSAGE.format(words=len(text.split()), notes=text),
-            )
+            text = self._ask(CONSOLIDATION_REASK_MESSAGE.format(words=len(text.split()), notes=text)) or text
         if self._counter.count(text) > SUMMARY_TARGET_TOKENS:
             truncated = True
             text = cut_to_tokens(text, SUMMARY_TARGET_TOKENS, self._counter)
@@ -581,13 +592,11 @@ class ConsolidatingMemory:
         self._pending = []
         return None
 
-    def _ask(self, session_id: str, message: str) -> str:
-        """One consolidation call, tried up to CONSOLIDATION_ATTEMPTS times."""
+    def _ask(self, message: str) -> str | None:
+        """One consolidation call, tried up to CONSOLIDATION_ATTEMPTS times; None when all failed."""
         messages = [{"role": "user", "content": message}]
         for _ in range(CONSOLIDATION_ATTEMPTS):
             reply = self._llm.chat_json(CONSOLIDATION_SYSTEM_PROMPT, messages)
             if reply is not None and isinstance(reply.get("summary"), str) and reply["summary"].strip():
                 return reply["summary"]
-        raise ConsolidationError(
-            f"consolidating session {session_id!r} failed {CONSOLIDATION_ATTEMPTS} times"
-        )
+        return None
