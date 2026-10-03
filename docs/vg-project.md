@@ -99,6 +99,13 @@ the points each ADR requires are written alongside M2.
   two strategies × two types, with results and analysis in the report.
 - This is a complete result on its own.
 
+Closed at the checkpoint on Saturday 3 October, one day late. `RetrievalMemory`
+is built under ADR 0011, both strategies ran on all 122 questions on 2 October,
+the answers were read by hand on 3 October, and the table with its analysis is
+in `docs/results.md`, every figure checked by `evals/results_table.py`. The
+method section carried over from M1 is written. Whether M3 fits before its
+hard stop is decided on Monday 5 October.
+
 **M3 — three strategies (step 5, second half). Done by Tuesday 6 October.**
 
 - `ConsolidatingMemory` is built. Before it is measured, three rules are
