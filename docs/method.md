@@ -1,9 +1,10 @@
 # Method (draft)
 
-Status: draft, written in M2 on 2026-10-03. M3 adds the rules for
-`ConsolidatingMemory`. Every rule below is fixed in an ADR before the strategy
-it applies to was measured; the number in brackets names the record, and the
-figures are the ones those records verify.
+Status: draft, written in M2 on 2026-10-03; the rules for
+`ConsolidatingMemory` added in M3 the same night, before its run. Every rule
+below is fixed in an ADR before the strategy it applies to was measured; the
+number in brackets names the record, and the figures are the ones those
+records verify.
 
 ## The question and the comparison
 
@@ -12,8 +13,7 @@ answer, and at what cost? Three strategies for a conversational assistant's
 memory stand behind one interface, `ConversationMemory`, with three
 operations: `write` a turn, `retrieve` context for a question within a token
 budget, and `end_session`. A strategy decides for itself what to keep, what
-to recall and when to consolidate; the harness never does it for it. Two are
-measured so far, `RecentTurnsMemory` and `RetrievalMemory`.
+to recall and when to consolidate; the harness never does it for it.
 
 The assistant the memory serves is a Swedish household planner that answers
 from its database rather than from memory, so the assistant is never in the
@@ -118,9 +118,35 @@ turn that states it can miss it. As a secondary figure, recall is also
 computed with only the user's turns written, which is how LongMemEval's own
 retrieval indexes turns.
 
-**`ConsolidatingMemory`** is not measured yet. Before it is, three rules are
-recorded: which model consolidates, how a summary's id counts toward recall,
-and where the strategy's clock comes from during a replay (0009, 0010).
+**`ConsolidatingMemory`** keeps a rolling summary over a recent window. After
+every session it makes one call to `gpt-4o-mini-2024-07-18`, the model 0010's
+estimate assumed, with the notes so far and the session's turns as quoted
+transcript, and the reply becomes the new notes (0015). The notes are held
+to S = 1000 tokens: the prompt asks for 750 words, states the limit first and
+forbids links and markdown; a reply over S is asked for once more with its
+word count; a second reply over S is cut from the start, at a sentence
+boundary, so the oldest notes go first, as the baseline's window forgets
+(0015, 0017). A session the model fails three times, which in the smoke tests
+was a reply that looped on one phrase or on whitespace until the JSON never
+closed, is skipped: the notes stay as they were and the skip is counted (0016).
+At recall the newest notes visible at the cutoff come first, as one assistant
+turn, and the most recent raw turns that fit in the rest of the budget follow
+in the order they were written; raw turns are kept after consolidation, so
+without visible notes the strategy is the baseline (0015). The notes are
+stamped with the latest time the strategy has been given, never the wall
+clock, so they can neither leak past a cutoff nor be backdated (0014). Recall
+and precision count the notes' id as one recalled item that matches no
+evidence, so evidence that reached the model only through the notes counts
+as missed; next to them the strategy reports *evidence consolidated*, the
+share of evidence turns the consolidator read, from the flat list of turn
+ids each summary derives from (0013). Both figures are computable without a
+model, so the prompt, S and the cut rule were fixed before the strategy's
+first dry run. The consolidation calls are the strategy's own cost, logged
+under their own label and priced at the consolidator's rate; the list-order
+replay of 0009 is made on the ten `knowledge-update` pilot questions only,
+and its calls are not counted as the strategy's (0009, 0015). What the
+consolidator wrote is kept in every row, since the strategy cannot be
+replayed to the same text.
 
 ## Answering and grading (0008)
 
@@ -202,5 +228,12 @@ before its figures are reported.
   the Swedish assistant they are an indication to be checked.
 - The retrieval row is one lexical index. A dense index would miss less on
   paraphrase and was not measured.
-- The consolidation model, when M3 is measured, is a weaker one than the
-  answering model, which confounds the third hypothesis (0010).
+- The consolidation model is a weaker one than the answering model, which
+  confounds the third hypothesis (0010). It did not keep to the size it was
+  asked for: the size is held by a second call and then by code, and a cut
+  summary is one the model did not make (0015, 0017). At temperature 0 it
+  sometimes loops instead of answering, and the session is then skipped
+  (0016). The summaries are not reproducible between runs.
+- The recall figure of `ConsolidatingMemory` measures its window only; what
+  the notes carried is visible in accuracy and in *evidence consolidated*,
+  not in recall (0013).
