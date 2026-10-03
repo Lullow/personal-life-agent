@@ -23,6 +23,7 @@ from evals.longmemeval import load_questions  # noqa: E402
 from evals.verify_adr_numbers import (  # noqa: E402
     ADR_DIR, KU, TYPES, Claim, TiktokenCounter, build_records, fmt, judge, load_pinned,
 )
+from life_agent.agent.memory import CONSOLIDATION_SYSTEM_PROMPT, SUMMARY_TARGET_TOKENS  # noqa: E402
 
 RESULTS = Path(__file__).resolve().parent / "results"
 M2_RUNS = ("retrieval-20261002-193417.jsonl", "recent-turns-20261002-193902.jsonl")
@@ -76,6 +77,7 @@ def compute(text: str) -> dict:
                 largest_session=largest_session, largest_history=largest_history,
                 clock_calls=sum(sessions_per_history), list_calls=list_order,
                 calls_per_m2_run=calls_per_run, prompt_tokens=counter.count(system_prompt(text)),
+                prompt_in_code=system_prompt(text) == CONSOLIDATION_SYSTEM_PROMPT,
                 words_to_tokens=WORDS_ASKED * tokens / words,
                 consolidate=design["consolidate"], total=design["total"], share=design["share"],
                 gpt4o_500_share=c["grid"][(CHOSEN_N, "gpt-4o-2024-08-06", 500)]["share"],
@@ -95,6 +97,10 @@ def claims(f: dict) -> list[Claim]:
               kind="external", note="OpenRouter /api/v1/models, 2026-10-03"),
         Claim("0012", "instruction shorter than 0010's", r"instruction is shorter than its (\d+) tokens",
               f["prompt_tokens"] < PROMPT, note=f"prompt counts {f['prompt_tokens']} tokens"),
+        Claim("0012", "the prompt in code is the record's", r"The system\s+prompt is:",
+              f["prompt_in_code"], note="memory.CONSOLIDATION_SYSTEM_PROMPT"),
+        Claim("0012", "S in code is the record's", r"The target size S is ([\d,]+) tokens",
+              (SUMMARY_TARGET_TOKENS,), note="memory.SUMMARY_TARGET_TOKENS"),
         Claim("0012", "750 words is about 1000 tokens", r"asks for (\d+) words, about ([\d,]+) tokens",
               (WORDS_ASKED, f["words_to_tokens"]), kind="approx",
               note=f"{f['words_to_tokens']:.0f} tokens at the dataset's words-per-token"),

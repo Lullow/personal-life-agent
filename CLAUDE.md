@@ -225,8 +225,7 @@ class ConversationMemory(Protocol):
     def end_session(self) -> None: ...
 ```
 
-Three implementations, in this order. `RecentTurnsMemory` and
-`RetrievalMemory` are built; the third comes in step 5 (`docs/vg-project.md`).
+Three implementations, in this order, all built (`docs/vg-project.md`).
 
 1. `RecentTurnsMemory` — **built.** The last N turns, windowed at retrieve. The
    agent's default, and the baseline.
@@ -235,7 +234,14 @@ Three implementations, in this order. `RecentTurnsMemory` and
    no way to overwrite stale facts. **This is intentional** — it is what the
    baseline should fail at. Its rules, constants included, are fixed by ADR
    0011 and are not tuned to a result.
-3. `ConsolidatingMemory` — **not built.** Rolling summary plus a recent window.
+3. `ConsolidatingMemory` — **built.** A rolling summary rewritten by
+   `gpt-4o-mini` in `end_session()`, shown first as an assistant turn, then
+   the most recent raw turns that fit. Raw turns are kept. Its design, how a
+   summary counts toward recall, and where its clock comes from are fixed by
+   ADRs 0012–0014; the prompt lives in `memory.py`, not `prompts.py`, and is
+   not tuned to a result. The harness builds it with a consolidator client;
+   the agent cannot be switched to it yet (it does not hand its client to
+   its memory).
 
 ### Rules that hold across all implementations
 
@@ -274,7 +280,8 @@ prompt and has no write path into domain data.
 
 Consolidation's LLM call runs outside the turn and must never be able to
 produce a tool call — the same discipline `READ_ANSWER_SYSTEM_PROMPT` already
-has. `ConsolidatingMemory` is not built yet; it comes in step 5.
+has. `ConsolidatingMemory` keeps that discipline: one JSON string back, and
+nothing dispatches on it.
 
 Tests are offline (`tests/conftest.py` neutralises `.env`). Any embedding-based
 retrieval needs a deterministic fake embedder behind the same Protocol.
@@ -299,5 +306,5 @@ The evaluation must therefore run **headless**: `evals/longmemeval.py` must
 drive the memory module through a thin harness, not through
 `ConversationAgent.send()`, and the agent must never appear in the measured
 path. It reads its questions from `evals/longmemeval_questions.json` and its
-replay rules from `evals/verify_adr_numbers.py`; ADRs 0004–0009 and 0011 are its
-specification.
+replay rules from `evals/verify_adr_numbers.py`; ADRs 0004–0009 and 0011–0014
+are its specification.

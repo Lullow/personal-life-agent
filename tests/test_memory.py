@@ -5,24 +5,53 @@ every strategy and asserts the rules that hold for all of them — it is the
 harness the next two implementations plug into, and a strategy that cannot pass
 it is not finished.  The rest test one strategy each:
 :class:`RecentTurnsMemory`, including the window behaviour the conversation
-loop used to implement itself, and :class:`RetrievalMemory`, whose rules are
-those of ADR 0011.
+loop used to implement itself, :class:`RetrievalMemory`, whose rules are
+those of ADR 0011, and :class:`ConsolidatingMemory`, whose rules are those of
+ADRs 0012 to 0014.  The consolidator is a fake that replies with a scripted
+summary and keeps every call, so a test can read what it was shown.
 """
 
+import inspect
 from datetime import datetime, timedelta
 
 import pytest
 
+import life_agent.agent.memory as memory_module
 from life_agent.agent.memory import (
+    CONSOLIDATION_ATTEMPTS,
+    CONSOLIDATION_SYSTEM_PROMPT,
     ApproxTokenCounter,
+    ConsolidatingMemory,
+    ConsolidationError,
     MemoryRecord,
     RecentTurnsMemory,
     RetrievalMemory,
     make_record_id,
+    make_summary_id,
 )
 
 NOW = datetime(2026, 9, 6, 12, 0, 0)
 LATER = NOW + timedelta(hours=1)
+
+
+class FakeConsolidator:
+    """Replies with the scripted *replies* in turn, then with numbered notes."""
+
+    def __init__(self, *replies):
+        self.replies = list(replies)
+        self.calls = []
+
+    def chat_json(self, system_prompt, messages):
+        self.calls.append((system_prompt, messages))
+        if self.replies:
+            return self.replies.pop(0)
+        return {"summary": f"notes after {len(self.calls)} call(s)"}
+
+
+class CharCounter:
+    def count(self, text: str) -> int:
+        return len(text)
+
 
 # Every strategy, built fresh.  Add the last one here and the contract below
 # starts applying to it without a line of new test code.  Each query shares a
@@ -32,6 +61,7 @@ STRATEGIES = [
     pytest.param(lambda: RecentTurnsMemory(max_turns=10), id="recent-turns"),
     pytest.param(lambda: RecentTurnsMemory(max_turns=None), id="recent-turns-no-window"),
     pytest.param(lambda: RetrievalMemory(), id="retrieval"),
+    pytest.param(lambda: ConsolidatingMemory(FakeConsolidator()), id="consolidating"),
 ]
 
 
@@ -386,6 +416,271 @@ class TestRetrievalMemory:
         memory.end_session()
 
         assert [r.content for r in memory.records] == ["hej"]
+
+
+# ---------------------------------------------------------------------------
+# ConsolidatingMemory — ADRs 0012 (design), 0013 (derived_from), 0014 (clock)
+# ---------------------------------------------------------------------------
+
+
+def consolidating(*replies, counter=None):
+    llm = FakeConsolidator(*replies)
+    return ConsolidatingMemory(llm, token_counter=counter), llm
+
+
+def shown(result):
+    return [m["content"] for m in result.messages]
+
+
+class TestConsolidatingMemory:
+    def test_end_session_turns_the_pending_messages_into_a_summary(self):
+        memory, llm = consolidating({"summary": "the user runs on Tuesdays"})
+        memory.write(record(0, "I run on Tuesdays"))
+        memory.write(record(1, "Noted.", role="assistant"))
+
+        memory.end_session()
+
+        summary = memory.records[-1]
+        assert summary.kind == "summary"
+        assert summary.role == "assistant"
+        assert summary.content == "the user runs on Tuesdays"
+        assert summary.id == make_summary_id("s1")
+        assert summary.session_id == "s1"
+        assert summary.derived_from == (make_record_id("s1", 0), make_record_id("s1", 1))
+        assert len(llm.calls) == 1
+
+    def test_the_call_quotes_the_transcript_under_the_notes_so_far(self):
+        memory, llm = consolidating({"summary": "first notes"})
+        memory.write(record(0, "I run on Tuesdays"))
+        memory.write(record(1, "Noted.", role="assistant"))
+        memory.end_session()
+        memory.write(record(0, "Now I run on Fridays", session_id="s2"))
+        memory.end_session()
+
+        first, second = llm.calls
+        assert first[0] == CONSOLIDATION_SYSTEM_PROMPT
+        assert first[1] == [{
+            "role": "user",
+            "content": "Notes so far:\n(none)\n\nConversation to add:\n"
+                       "user: I run on Tuesdays\n\nassistant: Noted.",
+        }]
+        # One user message: the session is quoted data, not turns to continue.
+        assert second[1] == [{
+            "role": "user",
+            "content": "Notes so far:\nfirst notes\n\nConversation to add:\n"
+                       "user: Now I run on Fridays",
+        }]
+
+    def test_write_never_consolidates(self):
+        memory, llm = consolidating()
+        for i in range(50):
+            memory.write(record(i, f"message {i}"))
+
+        assert llm.calls == []
+        assert all(r.kind == "message" for r in memory.records)
+
+    def test_nothing_happens_on_a_session_without_messages(self):
+        memory, llm = consolidating()
+        memory.end_session()
+        memory.write(record(0, "hej"))
+        memory.end_session()
+        memory.end_session()
+        memory.write(record(1, "Saved 1 item(s)", role="assistant", kind="outcome"))
+        memory.end_session()
+
+        assert len(llm.calls) == 1
+
+    # -- what retrieve shows (0012) --
+
+    def test_the_summary_comes_first_then_the_window_in_write_order(self):
+        memory, _ = consolidating({"summary": "notes"})
+        memory.write(record(0, "one"))
+        memory.write(record(1, "two", role="assistant"))
+        memory.end_session()
+        memory.write(record(0, "three", session_id="s2"))
+
+        result = memory.retrieve("anything", at=NOW, budget_tokens=1000)
+
+        assert result.messages == [
+            {"role": "assistant", "content": "notes"},
+            {"role": "user", "content": "one"},
+            {"role": "assistant", "content": "two"},
+            {"role": "user", "content": "three"},
+        ]
+        assert result.sources == (
+            make_summary_id("s1"),
+            make_record_id("s1", 0),
+            make_record_id("s1", 1),
+            make_record_id("s2", 0),
+        )
+
+    def test_raw_records_are_kept_after_consolidation(self):
+        memory, _ = consolidating({"summary": "notes"})
+        memory.write(record(0, "one"))
+        memory.end_session()
+
+        assert [r.kind for r in memory.records] == ["message", "summary"]
+        assert "one" in shown(memory.retrieve("one", at=NOW, budget_tokens=1000))
+
+    def test_the_window_fills_what_the_summary_left(self):
+        memory, _ = consolidating({"summary": "x" * 10}, counter=CharCounter())
+        memory.write(record(0, "aaaa"))
+        memory.write(record(1, "bbbbbbbb"))
+        memory.write(record(2, "cccc"))
+        memory.end_session()
+
+        result = memory.retrieve("anything", at=NOW, budget_tokens=20)
+
+        # 10 for the notes, 4 for the newest, then 8 does not fit and the walk
+        # ends there: an older record that would fit is not taken (ADR 0007).
+        assert shown(result) == ["x" * 10, "cccc"]
+        assert result.tokens_used == 14
+
+    def test_the_newest_summary_is_the_one_shown(self):
+        memory, _ = consolidating({"summary": "first"}, {"summary": "second"})
+        memory.write(record(0, "one"))
+        memory.end_session()
+        memory.write(record(0, "two", session_id="s2"))
+        memory.end_session()
+
+        result = memory.retrieve("anything", at=NOW, budget_tokens=1000)
+
+        assert shown(result)[0] == "second"
+        assert "first" not in shown(result)
+
+    def test_without_a_summary_the_strategy_is_the_baseline(self):
+        memory, _ = consolidating(counter=CharCounter())
+        memory.write(record(0, "x" * 100))
+
+        result = memory.retrieve("anything", at=NOW, budget_tokens=10)
+
+        # The newest record is always admitted, as RecentTurnsMemory does.
+        assert shown(result) == ["x" * 100]
+
+    def test_with_a_summary_an_oversized_record_is_not_admitted(self):
+        memory, _ = consolidating({"summary": "notes"}, counter=CharCounter())
+        memory.write(record(0, "x" * 100))
+        memory.end_session()
+
+        result = memory.retrieve("anything", at=NOW, budget_tokens=10)
+
+        assert shown(result) == ["notes"]
+        assert result.tokens_used == 5
+
+    def test_the_query_makes_no_difference(self):
+        memory, _ = consolidating({"summary": "notes"})
+        memory.write(record(0, "the gym"))
+        memory.end_session()
+
+        a = memory.retrieve("gym", at=NOW, budget_tokens=1000)
+        b = memory.retrieve("saffron", at=NOW, budget_tokens=1000)
+
+        assert a == b
+
+    # -- outcomes --
+
+    def test_an_outcome_never_enters_the_call_and_stays_verbatim(self):
+        memory, llm = consolidating({"summary": "notes"})
+        memory.write(record(0, "jag ska träna imorgon"))
+        memory.write(record(1, "Saved 4 item(s)", role="assistant", kind="outcome"))
+        memory.end_session()
+
+        (_, messages), = llm.calls
+        assert "Saved 4 item(s)" not in messages[0]["content"]
+        assert memory.records[-1].derived_from == (make_record_id("s1", 0),)
+        assert "Saved 4 item(s)" in shown(memory.retrieve("saved", at=NOW, budget_tokens=1000))
+
+    # -- derived_from is flat (0013) --
+
+    def test_derived_from_accumulates_across_sessions(self):
+        memory, _ = consolidating()
+        memory.write(record(0, "one"))
+        memory.write(record(1, "two", role="assistant"))
+        memory.end_session()
+        memory.write(record(0, "three", session_id="s2"))
+        memory.end_session()
+
+        assert memory.records[-1].derived_from == (
+            make_record_id("s1", 0),
+            make_record_id("s1", 1),
+            make_record_id("s2", 0),
+        )
+
+    def test_ids_and_derived_from_are_the_same_in_two_replays(self):
+        def replay():
+            memory, _ = consolidating()
+            memory.write(record(0, "one"))
+            memory.end_session()
+            memory.write(record(0, "two", session_id="s2"))
+            memory.end_session()
+            return [(r.id, r.derived_from) for r in memory.records if r.kind == "summary"]
+
+        assert replay() == replay()
+
+    def test_a_second_summary_for_the_same_session_is_refused(self):
+        memory, _ = consolidating()
+        memory.write(record(0, "one"))
+        memory.end_session()
+        memory.write(record(1, "two"))
+
+        with pytest.raises(ValueError):
+            memory.end_session()
+
+    # -- the clock (0014) --
+
+    def test_the_summary_is_stamped_with_the_largest_time_seen(self):
+        memory, _ = consolidating()
+        memory.write(record(0, "later", at=LATER))
+        memory.write(record(1, "earlier", at=NOW))
+        memory.end_session()
+
+        # The largest, not the last written: the clock never moves backwards.
+        assert memory.records[-1].at == LATER
+
+    def test_a_summary_made_after_the_cutoff_is_invisible(self):
+        memory, _ = consolidating({"summary": "notes"})
+        memory.write(record(0, "before", at=NOW))
+        memory.write(record(1, "after", at=LATER))
+        memory.end_session()
+
+        at_now = memory.retrieve("anything", at=NOW, budget_tokens=1000)
+        at_later = memory.retrieve("anything", at=LATER, budget_tokens=1000)
+
+        assert shown(at_now) == ["before"]
+        assert shown(at_later) == ["notes", "before", "after"]
+
+    def test_the_module_reads_no_clock_of_its_own(self):
+        source = inspect.getsource(memory_module)
+        assert "now()" not in source and "today()" not in source
+
+    # -- failures --
+
+    def test_a_failed_call_is_tried_again(self):
+        memory, llm = consolidating(None, None, {"summary": "third time"})
+        memory.write(record(0, "one"))
+
+        memory.end_session()
+
+        assert len(llm.calls) == CONSOLIDATION_ATTEMPTS
+        assert memory.records[-1].content == "third time"
+
+    def test_when_every_attempt_fails_nothing_is_summarised_or_lost(self):
+        memory, llm = consolidating(None, None, None)
+        memory.write(record(0, "one"))
+
+        with pytest.raises(ConsolidationError):
+            memory.end_session()
+
+        assert len(llm.calls) == CONSOLIDATION_ATTEMPTS
+        assert [r.kind for r in memory.records] == ["message"]
+        assert shown(memory.retrieve("one", at=NOW, budget_tokens=1000)) == ["one"]
+
+    def test_a_reply_without_a_string_summary_is_a_failure(self):
+        memory, _ = consolidating({"summary": 5}, {"notes": "x"}, {"summary": "  "})
+        memory.write(record(0, "one"))
+
+        with pytest.raises(ConsolidationError):
+            memory.end_session()
 
 
 class TestApproxTokenCounter:

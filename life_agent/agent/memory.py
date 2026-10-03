@@ -47,6 +47,32 @@ DEFAULT_BUDGET_TOKENS = 8000
 BM25_K1 = 1.2
 BM25_B = 0.75
 
+# The consolidator's target size S, in tokens (ADR 0012).  A target the prompt
+# asks for in words, not a cap: nothing truncates, and the evaluation reports
+# the size the model actually wrote.
+SUMMARY_TARGET_TOKENS = 1000
+
+# A consolidation call that returns None is tried this many times in all,
+# as an answer call is (ADR 0008, 0012).
+CONSOLIDATION_ATTEMPTS = 3
+
+# ADR 0012, copied from the record's code block.  Fixed before the strategy's
+# first dry run, like BM25's constants: the dry run shows this strategy's
+# recall without a model call (ADR 0013), so the prompt is not there to be
+# tuned either.  It lives here and not in prompts.py because it is the memory
+# strategy's, not the agent's, and it runs outside the turn: the reply is one
+# string, and nothing dispatches on it.
+CONSOLIDATION_SYSTEM_PROMPT = (
+    "You keep the assistant's notes about its earlier conversations with the user.\n"
+    "You are given the notes so far and the transcript of one more conversation.\n"
+    "Rewrite the notes so that they also cover this conversation. Keep concrete\n"
+    "facts: names, numbers, dates, places, plans, preferences, and what the user\n"
+    "asked for. When a fact has changed, write the current value in place of the\n"
+    "old one. Keep the notes in the language of the conversation, and write them so\n"
+    "that they can be read on their own, in at most 750 words. Reply with a JSON\n"
+    'object: {"summary": "<the notes>"}.'
+)
+
 RecordKind = Literal["message", "outcome", "summary"]
 Role = Literal["user", "assistant"]
 
@@ -60,6 +86,16 @@ def make_record_id(session_id: str, turn_index: int) -> str:
     being compared, so this must never grow a random component.
     """
     return f"{session_id}:{turn_index}"
+
+
+def make_summary_id(session_id: str) -> str:
+    """Build the id of the summary made when *session_id* ended (ADR 0012).
+
+    Deterministic for the same reason as :func:`make_record_id`, and shaped so
+    that it can never collide with one: a turn id ends in a number, this one
+    starts with a word no session is named.
+    """
+    return f"summary:{session_id}"
 
 
 @dataclass(frozen=True)
@@ -330,3 +366,157 @@ class RetrievalMemory:
                 norm = 1 - BM25_B + BM25_B * lengths[i] / average
                 scores[i] += idf * tf * (BM25_K1 + 1) / (tf + BM25_K1 * norm)
         return scores
+
+
+class Consolidator(Protocol):
+    """The one call :class:`ConsolidatingMemory` makes: the loop's JSON contract."""
+
+    def chat_json(
+        self, system_prompt: str, messages: list[dict[str, str]]
+    ) -> dict | None: ...
+
+
+class ConsolidationError(RuntimeError):
+    """Every attempt to consolidate failed.  Nothing was summarised or lost."""
+
+
+def consolidation_message(previous: str | None, turns: list[MemoryRecord]) -> str:
+    """The user message of a consolidation call, as ADR 0012 states it.
+
+    The session goes in as quoted transcript, not as chat turns: the model is
+    to summarise the conversation, not continue it, and an instruction inside
+    a turn stays something the user once said.
+    """
+    transcript = "\n\n".join(f"{r.role}: {r.content}" for r in turns)
+    return f"Notes so far:\n{previous or '(none)'}\n\nConversation to add:\n{transcript}"
+
+
+class ConsolidatingMemory:
+    """A rolling summary, rewritten after every session, over a recent window.
+
+    This is the strategy the third hypothesis is about: when a fact changes,
+    the notes are meant to carry the new value in place of the old one, where
+    :class:`RetrievalMemory` would return both.  What it pays is a model call
+    per session and a window S tokens smaller than the baseline's.
+
+    Its rules are decided in ADRs 0012, 0013 and 0014 and must not drift:
+
+    * **Consolidation happens in** :meth:`end_session` **and nowhere else.**  One
+      call reads the notes so far and the session's ``kind="message"`` records
+      as quoted transcript and writes the next notes.  An ``outcome`` never
+      enters the call and is never paraphrased.  Raw records are kept: the
+      summary is a view over them, not a replacement.
+    * **Recall is the newest visible summary first, then the window.**  The
+      summary is an assistant message; the raw records that fit in the rest of
+      the budget follow in the order they were written, filled backwards from
+      the newest as the baseline fills.  Without a visible summary the strategy
+      returns what the baseline would.
+    * **The clock is the latest** ``at`` **seen in** :meth:`write`.  A summary is
+      stamped with it, never with the wall clock, which in a replay would put
+      it past every cutoff, and never backdated.
+    * **``derived_from`` is flat**: every message id the notes cover, so the
+      evaluation can tell "the consolidator never saw it" from "it saw it and
+      lost it" without walking a chain (ADR 0013).
+    """
+
+    def __init__(
+        self, llm: Consolidator, *, token_counter: TokenCounter | None = None
+    ) -> None:
+        self._llm = llm
+        self._counter = token_counter or ApproxTokenCounter()
+        # Everything, raw records and summaries alike, in the order it arrived.
+        self._records: list[MemoryRecord] = []
+        # The messages written since the last consolidation.
+        self._pending: list[MemoryRecord] = []
+        self._latest_summary: MemoryRecord | None = None
+        self._clock: datetime | None = None
+
+    @property
+    def records(self) -> list[MemoryRecord]:
+        """Everything written or summarised so far, oldest first.  For tests and the eval."""
+        return list(self._records)
+
+    def write(self, record: MemoryRecord) -> None:
+        self._records.append(record)
+        if self._clock is None or record.at > self._clock:
+            self._clock = record.at
+        if record.kind == "message":
+            self._pending.append(record)
+
+    def retrieve(
+        self, query: str, *, at: datetime, budget_tokens: int
+    ) -> Retrieval:
+        summaries = [r for r in self._records if r.kind == "summary" and r.at <= at]
+        raw = [r for r in self._records if r.kind != "summary" and r.at <= at]
+        summary = summaries[-1] if summaries else None
+        used = self._counter.count(summary.content) if summary else 0
+
+        # The baseline's fill (ADR 0007), into what the summary left.  With a
+        # summary in hand the first raw record that does not fit ends the walk;
+        # without one the newest record is always admitted, as the baseline does.
+        window: list[MemoryRecord] = []
+        for record in reversed(raw):
+            cost = self._counter.count(record.content)
+            if (summary or window) and used + cost > budget_tokens:
+                break
+            used += cost
+            window.append(record)
+        window.reverse()
+
+        shown = ([summary] if summary else []) + window
+        return Retrieval(
+            messages=[r.as_message() for r in shown],
+            sources=tuple(r.id for r in shown),
+            tokens_used=used,
+        )
+
+    def end_session(self) -> None:
+        """Rewrite the notes to cover the session that just ended.
+
+        Nothing happens when no message was written since the last time.  If
+        every attempt fails the records stay as they are and
+        :class:`ConsolidationError` is raised, so a half-made summary never
+        reaches a context silently.
+        """
+        if not self._pending:
+            return None
+        session_id = self._pending[-1].session_id
+        summary_id = make_summary_id(session_id)
+        if any(r.id == summary_id for r in self._records):
+            raise ValueError(f"a summary for session {session_id!r} already exists")
+
+        previous = self._latest_summary
+        messages = [
+            {
+                "role": "user",
+                "content": consolidation_message(
+                    previous.content if previous else None, self._pending
+                ),
+            }
+        ]
+        text: str | None = None
+        for _ in range(CONSOLIDATION_ATTEMPTS):
+            reply = self._llm.chat_json(CONSOLIDATION_SYSTEM_PROMPT, messages)
+            if reply is not None and isinstance(reply.get("summary"), str) and reply["summary"].strip():
+                text = reply["summary"]
+                break
+        if text is None:
+            raise ConsolidationError(
+                f"consolidating session {session_id!r} failed {CONSOLIDATION_ATTEMPTS} times"
+            )
+
+        assert self._clock is not None  # a pending record has set it
+        summary = MemoryRecord(
+            id=summary_id,
+            role="assistant",
+            content=text,
+            kind="summary",
+            at=self._clock,
+            session_id=session_id,
+            derived_from=(previous.derived_from if previous else ())
+            + tuple(r.id for r in self._pending),
+        )
+        self._records.append(summary)
+        self._latest_summary = summary
+        self._pending = []
+        return None

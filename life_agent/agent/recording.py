@@ -38,6 +38,10 @@ class LLMCall:
     input_tokens: int
     output_tokens: int
     failed: bool
+    # The model the call was made with, so that a cost figure can price each
+    # call at its own rate (ADR 0012): the consolidator's tokens cost a
+    # fraction of the answering model's.  None when the caller did not say.
+    model: str | None = None
 
 
 class RecordingLLMClient:
@@ -57,11 +61,13 @@ class RecordingLLMClient:
         label: str,
         counter: TokenCounter,
         log: list[LLMCall],
+        model: str | None = None,
     ) -> None:
         self._inner = inner
         self._label = label
         self._counter = counter
         self._log = log
+        self._model = model
 
     def chat_json(
         self, system_prompt: str, messages: list[dict[str, str]]
@@ -83,6 +89,7 @@ class RecordingLLMClient:
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 failed=result is None,
+                model=self._model,
             )
         )
         return result

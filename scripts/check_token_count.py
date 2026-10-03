@@ -42,7 +42,7 @@ def main() -> int:
     qid = load_questions(1)[SSU][0]
     x = data[qid]
     counter = TiktokenCounter()
-    retrieval, _, _ = recall_of(x, "clock", STRATEGIES["recent-turns"], counter)
+    retrieval, _, _, _ = recall_of(x, "clock", lambda c: STRATEGIES["recent-turns"](c, None), counter)
     messages = answer_messages(x, retrieval)
 
     client = real_client()
