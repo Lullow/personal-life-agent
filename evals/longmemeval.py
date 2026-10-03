@@ -1,4 +1,4 @@
-"""Run a memory strategy headless on LongMemEval, under ADRs 0004–0009, 0011 and 0013–0016.
+"""Run a memory strategy headless on LongMemEval, under ADRs 0004–0009, 0011 and 0013–0017.
 
 Each question's history is replayed into a fresh strategy (0004), recalled at
 23:59 on the question's day, answered by the model from what came back, and

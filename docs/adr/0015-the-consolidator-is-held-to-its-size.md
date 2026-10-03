@@ -3,7 +3,7 @@
 Status: accepted
 Date: 2026-10-03
 Supersedes: 0012
-Superseded by: 0016, for the failure rule only
+Superseded by: 0016, for the failure rule only; 0017, for the cut rule only
 
 ## Context
 

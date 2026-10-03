@@ -26,7 +26,7 @@ from life_agent.agent.memory import (
     MemoryRecord,
     RecentTurnsMemory,
     RetrievalMemory,
-    cut_to_tokens,
+    keep_last_tokens,
     make_record_id,
     make_summary_id,
 )
@@ -739,26 +739,27 @@ class TestConsolidatingMemory:
         (c,) = memory.consolidations
         assert (c.reasked, c.truncated) == (True, False)
 
-    def test_a_second_reply_still_over_s_is_cut_at_a_sentence_end(self, monkeypatch):
-        monkeypatch.setattr(memory_module, "SUMMARY_TARGET_TOKENS", 20)
-        long = "First fact. Second fact! Third fact? Fourth fact."
+    def test_a_second_reply_still_over_s_is_cut_from_the_start(self, monkeypatch):
+        monkeypatch.setattr(memory_module, "SUMMARY_TARGET_TOKENS", 25)
+        long = "Oldest fact. Older fact! Newer fact? Newest fact."
         memory, llm = consolidating({"summary": long}, {"summary": long}, counter=CharCounter())
         memory.write(record(0, "hej"))
         memory.end_session()
 
+        # ADR 0017: the oldest go first; the session just added survives.
         assert len(llm.calls) == 2
-        assert memory.records[-1].content == "First fact."
+        assert memory.records[-1].content == "Newer fact? Newest fact."
         (c,) = memory.consolidations
-        assert (c.tokens, c.reasked, c.truncated) == (len("First fact."), True, True)
+        assert (c.tokens, c.reasked, c.truncated) == (len("Newer fact? Newest fact."), True, True)
 
     def test_the_second_reply_replaces_the_first_even_when_longer(self, monkeypatch):
         monkeypatch.setattr(memory_module, "SUMMARY_TARGET_TOKENS", 20)
-        memory, _ = consolidating({"summary": "a" * 30}, {"summary": "b" * 15 + ". " + "c" * 30},
+        memory, _ = consolidating({"summary": "a" * 30}, {"summary": "c" * 30 + ". " + "b" * 15},
                                   counter=CharCounter())
         memory.write(record(0, "hej"))
         memory.end_session()
 
-        assert memory.records[-1].content == "b" * 15 + "."
+        assert memory.records[-1].content == "b" * 15
 
     def test_a_failed_second_call_falls_back_on_the_first_reply_cut(self, monkeypatch):
         monkeypatch.setattr(memory_module, "SUMMARY_TARGET_TOKENS", 12)
@@ -769,7 +770,7 @@ class TestConsolidatingMemory:
 
         # ADR 0016: the first reply was valid notes, only too long.
         assert len(llm.calls) == 1 + CONSOLIDATION_ATTEMPTS
-        assert memory.records[-1].content == "Too long."
+        assert memory.records[-1].content == "By far."
         (c,) = memory.consolidations
         assert (c.reasked, c.truncated, c.failed) == (True, True, False)
 
@@ -790,26 +791,26 @@ class TestConsolidatingMemory:
         assert SUMMARY_TARGET_TOKENS == 1000
 
 
-class TestCutToTokens:
+class TestKeepLastTokens:
     counter = CharCounter()
 
     def test_text_within_the_limit_is_unchanged(self):
-        assert cut_to_tokens("short.", 10, self.counter) == "short."
+        assert keep_last_tokens("short.", 10, self.counter) == "short."
 
-    def test_the_cut_falls_after_the_last_sentence_end_that_fits(self):
+    def test_the_cut_falls_at_the_first_sentence_start_that_fits(self):
         text = "One. Two! Three? Four."
-        assert cut_to_tokens(text, 15, self.counter) == "One. Two!"
+        assert keep_last_tokens(text, 15, self.counter) == "Three? Four."
 
     def test_a_line_break_is_a_sentence_end(self):
-        text = "first line\nsecond line\nthird"
-        assert cut_to_tokens(text, 22, self.counter) == "first line\nsecond line"
+        text = "first\nsecond line\nthird line"
+        assert keep_last_tokens(text, 22, self.counter) == "second line\nthird line"
 
-    def test_without_a_sentence_end_the_cut_falls_after_a_word(self):
+    def test_without_a_sentence_start_the_cut_keeps_the_last_words(self):
         text = "alpha beta gamma delta"
-        assert cut_to_tokens(text, 12, self.counter) == "alpha beta"
+        assert keep_last_tokens(text, 12, self.counter) == "gamma delta"
 
     def test_nothing_fits_gives_nothing(self):
-        assert cut_to_tokens("abcdefgh", 3, self.counter) == ""
+        assert keep_last_tokens("abcdefgh", 3, self.counter) == ""
 
 
 class TestApproxTokenCounter:

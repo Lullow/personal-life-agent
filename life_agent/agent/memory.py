@@ -86,7 +86,7 @@ CONSOLIDATION_REASK_MESSAGE = (
     "{notes}"
 )
 
-# Where a cut may fall: after a sentence end or a line break (ADR 0015).
+# A sentence end, after which a cut may fall (ADR 0017).
 _SENTENCE_END = re.compile(r"[.!?]|\n")
 
 RecordKind = Literal["message", "outcome", "summary"]
@@ -408,24 +408,25 @@ def consolidation_message(previous: str | None, turns: list[MemoryRecord]) -> st
     return f"Notes so far:\n{previous or '(none)'}\n\nConversation to add:\n{transcript}"
 
 
-def cut_to_tokens(text: str, limit: int, counter: TokenCounter) -> str:
-    """Cut *text* after the last sentence end at which it counts at most *limit*.
+def keep_last_tokens(text: str, limit: int, counter: TokenCounter) -> str:
+    """Drop the beginning of *text* so that what is left counts at most *limit*.
 
-    A sentence end is ``.``, ``!``, ``?`` or a line break (ADR 0015).  If no
-    sentence end leaves anything, the cut falls after the last word that fits.
-    Works with any counter, since it only ever counts: the candidates are
-    tried from the end, so the first that fits is the longest.
+    The cut falls at a sentence start: the position after a ``.``, ``!``,
+    ``?`` or line break, leading whitespace dropped (ADR 0017).  The notes are
+    written oldest first, so this forgets the oldest first, as the baseline's
+    window does.  If no sentence start leaves a part that fits, the last words
+    that fit are kept.  Works with any counter, since it only ever counts: the
+    candidates are tried from the start, so the first that fits is the longest.
     """
     if counter.count(text) <= limit:
         return text
-    ends = [m.end() for m in _SENTENCE_END.finditer(text)]
-    for end in reversed(ends):
-        candidate = text[:end].rstrip()
+    for m in _SENTENCE_END.finditer(text):
+        candidate = text[m.end():].strip()
         if candidate and counter.count(candidate) <= limit:
             return candidate
     words = text.split()
-    for n in range(len(words) - 1, 0, -1):
-        candidate = " ".join(words[:n])
+    for n in range(1, len(words)):
+        candidate = " ".join(words[n:])
         if counter.count(candidate) <= limit:
             return candidate
     return ""
@@ -454,7 +455,7 @@ class ConsolidatingMemory:
     :class:`RetrievalMemory` would return both.  What it pays is a model call
     per session and a window S tokens smaller than the baseline's.
 
-    Its rules are decided in ADRs 0015, 0016, 0013 and 0014 and must not drift:
+    Its rules are decided in ADRs 0015–0017, 0013 and 0014 and must not drift:
 
     * **Consolidation happens in** :meth:`end_session` **and nowhere else.**  One
       call reads the notes so far and the session's ``kind="message"`` records
@@ -463,9 +464,10 @@ class ConsolidatingMemory:
       summary is a view over them, not a replacement.
     * **The summary never counts more than S tokens.**  A reply over S is
       asked for once more with its word count; a second reply over S is cut
-      after the last sentence end that fits.  Both are recorded in
-      :attr:`consolidations`, since a cut summary is one the model did not
-      make.  Under ADR 0012, which only asked, the model wrote eight times S.
+      from the start, at a sentence start, so the oldest notes go first (ADR
+      0017).  Both are recorded in :attr:`consolidations`, since a cut summary
+      is one the model did not make.  Under ADR 0012, which only asked, the
+      model wrote eight times S; under 0015 the cut fell two sessions in three.
     * **A session the consolidator cannot summarise is skipped** (ADR 0016),
       never fatal: the model loops at temperature 0 on some inputs, and the
       loop returns on every attempt.  The skip is recorded too.
@@ -571,7 +573,7 @@ class ConsolidatingMemory:
             text = self._ask(CONSOLIDATION_REASK_MESSAGE.format(words=len(text.split()), notes=text)) or text
         if self._counter.count(text) > SUMMARY_TARGET_TOKENS:
             truncated = True
-            text = cut_to_tokens(text, SUMMARY_TARGET_TOKENS, self._counter)
+            text = keep_last_tokens(text, SUMMARY_TARGET_TOKENS, self._counter)
 
         assert self._clock is not None  # a pending record has set it
         summary = MemoryRecord(

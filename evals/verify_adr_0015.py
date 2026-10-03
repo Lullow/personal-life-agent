@@ -1,4 +1,4 @@
-"""Recompute the figures in ADRs 0015 and 0016 from the pinned dataset, the M2 rows and the smoke tests.
+"""Recompute the figures in ADRs 0015, 0016 and 0017 from the pinned dataset, the M2 rows and the smoke tests.
 
 The figures describe the sessions the consolidator will read: how many there
 are, how large the largest is, how many calls the two replay orders take, and
@@ -30,6 +30,8 @@ M2_RUNS = ("retrieval-20261002-193417.jsonl", "recent-turns-20261002-193902.json
 SMOKE = "consolidating-20261003-192859-smoke.jsonl"  # the run under 0012 that 0015 reopens it for
 SMOKE_2 = "consolidating-20261003-205346-smoke.jsonl"  # the run under 0015 that 0016 reopens its failure rule for
 FAILURES_2 = "failures-20261003-214031-smoke.log"  # the same question rerun with the diagnosing wrapper: the raw failed replies
+SMOKE_3 = "consolidating-20261003-214031-smoke.jsonl"  # under 0015's cut: how often the size had to be held
+SMOKE_4 = "consolidating-20261003-221044-smoke.jsonl"  # the same under 0016
 SECONDS_PER_CALL = 8  # the six-session check under the stricter prompt, measured in session
 SUMMARY_TOKENS = 1000  # the S ADR 0012 fixes
 WORDS_ASKED = 750      # what the prompt asks the model for
@@ -79,6 +81,9 @@ def compute(text: str) -> dict:
     second = [json.loads(line) for line in (RESULTS / SMOKE_2).read_text(encoding="utf-8").splitlines()]
     failed_calls = [k for r in second for k in r["calls"] if k["failed"]]
     first_failure = json.loads((RESULTS / FAILURES_2).read_text(encoding="utf-8").splitlines()[0])
+    third = [json.loads(line) for line in (RESULTS / SMOKE_3).read_text(encoding="utf-8").splitlines()]
+    fourth = [json.loads(line) for line in (RESULTS / SMOKE_4).read_text(encoding="utf-8").splitlines()]
+    held = lambda r: (r["summary_reasked"], r["summary_truncated"], r["consolidations"])  # noqa: E731
     c = cost()
     design = c["grid"][(CHOSEN_N, CONSOLIDATOR, SUMMARY_TOKENS)]
     return dict(histories=len(sessions_per_history), sessions=sum(sessions_per_history),
@@ -102,7 +107,10 @@ def compute(text: str) -> dict:
                 failed_inputs={k["input_tokens"] for k in failed_calls if k["label"] == "consolidate"},
                 failed_by_row=[sum(k["failed"] for k in r["calls"]) for r in second],
                 loop_chars=len(first_failure["raw"]), loop_words=len(first_failure["raw"].split()),
-                loop_phrase='"Isis Unveiled"' in first_failure["raw"][-200:])
+                loop_phrase='"Isis Unveiled"' in first_failure["raw"][-200:],
+                third_ku=(third[1]["question_id"],) + held(third[1]),
+                fourth=[(r["question_id"],) + held(r) for r in fourth],
+                cut_share=sum(r["summary_truncated"] for r in third[1:] + fourth) / sum(r["consolidations"] for r in third[1:] + fourth))
 
 
 def claims(f: dict) -> list[Claim]:
@@ -167,6 +175,19 @@ def claims_0016(f: dict) -> list[Claim]:
     ]
 
 
+def claims_0017(f: dict) -> list[Claim]:
+    (q3, a3, c3, n3), ((q4a, a4a, c4a, n4a), (q4b, a4b, c4b, n4b)) = f["third_ku"], f["fourth"]
+    return [
+        Claim("0017", "third smoke test: asked again / cut of sessions",
+              r"On `([0-9a-f]{8})`, (\d+) sessions: (\d+) asked\s+again, (\d+) cut", (q3, n3, a3, c3)),
+        Claim("0017", "fourth smoke test: both rows",
+              r"(\d+) asked again and\s+(\d+) cut of (\d+) on `([0-9a-f]{8})`, (\d+) and (\d+) of (\d+) on `([0-9a-f]{8})`",
+              (a4a, c4a, n4a, q4a, a4b, c4b, n4b, q4b)),
+        Claim("0017", "the cut falls about two sessions in three", r"in about two thirds the cut does the work",
+              0.6 <= f["cut_share"] <= 0.72, note=f"cut in {f['cut_share']:.0%} of the sessions over the three rows"),
+    ]
+
+
 def main() -> int:
     raw = adr_text()
     text = re.sub(r"\s+", " ", raw)
@@ -174,11 +195,13 @@ def main() -> int:
     cs = claims(f)
     text_0016 = re.sub(r"\s+", " ", adr_text("0016"))
     cs_0016 = claims_0016(f)
-    for c, body in [(c, text) for c in cs] + [(c, text_0016) for c in cs_0016]:
+    text_0017 = re.sub(r"\s+", " ", adr_text("0017"))
+    cs_0017 = claims_0017(f)
+    for c, body in [(c, text) for c in cs] + [(c, text_0016) for c in cs_0016] + [(c, text_0017) for c in cs_0017]:
         judge(c, body)
         print(f"{c.status:12s} {c.label:44s} text {fmt(c.groups) if c.groups else '—':34s} "
               f"computed {fmt(c.computed)}{'  ' + c.note if c.note else ''}")
-    tally = Counter(c.status for c in cs + cs_0016)
+    tally = Counter(c.status for c in cs + cs_0016 + cs_0017)
     print("\n" + ", ".join(f"{k}: {v}" for k, v in sorted(tally.items())))
     return 1 if tally.get("DIFF") or tally.get("TEXT MISSING") else 0
 
