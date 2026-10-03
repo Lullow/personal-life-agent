@@ -47,6 +47,7 @@ pip install -e '.[eval]'
 .venv/bin/python evals/longmemeval.py --strategy retrieval --dry-run   # RetrievalMemory, offline
 .venv/bin/python evals/verify_adr_numbers.py        # recompute every figure in ADRs 0004–0009
 .venv/bin/python evals/verify_adr_0011.py           # the same for ADR 0011
+.venv/bin/python evals/verify_adr_0012.py           # the same for ADR 0012
 .venv/bin/python evals/results_table.py --check    # every figure in docs/results.md
 
 # Run
