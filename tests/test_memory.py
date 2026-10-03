@@ -20,12 +20,14 @@ import life_agent.agent.memory as memory_module
 from life_agent.agent.memory import (
     CONSOLIDATION_ATTEMPTS,
     CONSOLIDATION_SYSTEM_PROMPT,
+    SUMMARY_TARGET_TOKENS,
     ApproxTokenCounter,
     ConsolidatingMemory,
     ConsolidationError,
     MemoryRecord,
     RecentTurnsMemory,
     RetrievalMemory,
+    cut_to_tokens,
     make_record_id,
     make_summary_id,
 )
@@ -681,6 +683,102 @@ class TestConsolidatingMemory:
 
         with pytest.raises(ConsolidationError):
             memory.end_session()
+
+    # -- the size holds (0015) --
+
+    def test_a_summary_within_s_is_taken_as_it_is(self):
+        memory, llm = consolidating({"summary": "short notes."}, counter=CharCounter())
+        memory.write(record(0, "one"))
+        memory.end_session()
+
+        (c,) = memory.consolidations
+        assert len(llm.calls) == 1
+        assert (c.tokens, c.reasked, c.truncated) == (len("short notes."), False, False)
+
+    def test_a_summary_over_s_is_asked_for_once_more_with_its_word_count(self, monkeypatch):
+        monkeypatch.setattr(memory_module, "SUMMARY_TARGET_TOKENS", 20)
+        long = "one two three four five six seven eight nine ten."  # 50 chars
+        memory, llm = consolidating({"summary": long}, {"summary": "ten words cut."}, counter=CharCounter())
+        memory.write(record(0, "hej"))
+        memory.end_session()
+
+        assert len(llm.calls) == 2
+        second = llm.calls[1][1][0]["content"]
+        assert second.startswith("These notes are 10 words, over the limit of 750.")
+        assert second.endswith("Notes:\n" + long)
+        assert memory.records[-1].content == "ten words cut."
+        (c,) = memory.consolidations
+        assert (c.reasked, c.truncated) == (True, False)
+
+    def test_a_second_reply_still_over_s_is_cut_at_a_sentence_end(self, monkeypatch):
+        monkeypatch.setattr(memory_module, "SUMMARY_TARGET_TOKENS", 20)
+        long = "First fact. Second fact! Third fact? Fourth fact."
+        memory, llm = consolidating({"summary": long}, {"summary": long}, counter=CharCounter())
+        memory.write(record(0, "hej"))
+        memory.end_session()
+
+        assert len(llm.calls) == 2
+        assert memory.records[-1].content == "First fact."
+        (c,) = memory.consolidations
+        assert (c.tokens, c.reasked, c.truncated) == (len("First fact."), True, True)
+
+    def test_the_second_reply_replaces_the_first_even_when_longer(self, monkeypatch):
+        monkeypatch.setattr(memory_module, "SUMMARY_TARGET_TOKENS", 20)
+        memory, _ = consolidating({"summary": "a" * 30}, {"summary": "b" * 15 + ". " + "c" * 30},
+                                  counter=CharCounter())
+        memory.write(record(0, "hej"))
+        memory.end_session()
+
+        assert memory.records[-1].content == "b" * 15 + "."
+
+    def test_a_failed_second_call_is_tried_again_and_then_raises(self, monkeypatch):
+        monkeypatch.setattr(memory_module, "SUMMARY_TARGET_TOKENS", 5)
+        memory, llm = consolidating({"summary": "too long by far"}, None, None, None, counter=CharCounter())
+        memory.write(record(0, "hej"))
+
+        with pytest.raises(ConsolidationError):
+            memory.end_session()
+
+        assert len(llm.calls) == 1 + CONSOLIDATION_ATTEMPTS
+        assert [r.kind for r in memory.records] == ["message"]
+
+    def test_the_summary_never_takes_more_than_s_of_the_budget(self, monkeypatch):
+        monkeypatch.setattr(memory_module, "SUMMARY_TARGET_TOKENS", 10)
+        memory, _ = consolidating({"summary": "x" * 50}, {"summary": "y" * 50}, counter=CharCounter())
+        for i in range(5):
+            memory.write(record(i, "mmmm"))
+        memory.end_session()
+
+        result = memory.retrieve("anything", at=NOW, budget_tokens=30)
+
+        # 10 at most for the notes, so at least 20 of 30 are left for the window.
+        assert result.tokens_used <= 30
+        assert len(result.messages) >= 1 + 4
+
+    def test_s_is_a_thousand_tokens(self):
+        assert SUMMARY_TARGET_TOKENS == 1000
+
+
+class TestCutToTokens:
+    counter = CharCounter()
+
+    def test_text_within_the_limit_is_unchanged(self):
+        assert cut_to_tokens("short.", 10, self.counter) == "short."
+
+    def test_the_cut_falls_after_the_last_sentence_end_that_fits(self):
+        text = "One. Two! Three? Four."
+        assert cut_to_tokens(text, 15, self.counter) == "One. Two!"
+
+    def test_a_line_break_is_a_sentence_end(self):
+        text = "first line\nsecond line\nthird"
+        assert cut_to_tokens(text, 22, self.counter) == "first line\nsecond line"
+
+    def test_without_a_sentence_end_the_cut_falls_after_a_word(self):
+        text = "alpha beta gamma delta"
+        assert cut_to_tokens(text, 12, self.counter) == "alpha beta"
+
+    def test_nothing_fits_gives_nothing(self):
+        assert cut_to_tokens("abcdefgh", 3, self.counter) == ""
 
 
 class TestApproxTokenCounter:

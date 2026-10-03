@@ -1,11 +1,11 @@
-"""Recompute the figures in ADR 0012 from the pinned dataset and the M2 rows.
+"""Recompute the figures in ADR 0015 from the pinned dataset, the M2 rows and the smoke test.
 
 The figures describe the sessions the consolidator will read: how many there
 are, how large the largest is, how many calls the two replay orders take, and
 what ADR 0010's cost model says for the design. Nothing here consolidates
 anything.
 
-    .venv/bin/python evals/verify_adr_0012.py
+    .venv/bin/python evals/verify_adr_0015.py
 """
 
 from __future__ import annotations
@@ -27,14 +27,16 @@ from life_agent.agent.memory import CONSOLIDATION_SYSTEM_PROMPT, SUMMARY_TARGET_
 
 RESULTS = Path(__file__).resolve().parent / "results"
 M2_RUNS = ("retrieval-20261002-193417.jsonl", "recent-turns-20261002-193902.jsonl")
+SMOKE = "consolidating-20261003-192859-smoke.jsonl"  # the run under 0012 that 0015 reopens it for
+SECONDS_PER_CALL = 8  # the six-session check under the stricter prompt, measured in session
 SUMMARY_TOKENS = 1000  # the S ADR 0012 fixes
 WORDS_ASKED = 750      # what the prompt asks the model for
 
 
 def adr_text() -> str:
-    paths = sorted(ADR_DIR.glob("0012-*.md"))
+    paths = sorted(ADR_DIR.glob("0015-*.md"))
     if not paths:
-        raise SystemExit("no ADR 0012 to check")
+        raise SystemExit("no ADR 0015 to check")
     return paths[0].read_text(encoding="utf-8")
 
 
@@ -42,7 +44,7 @@ def system_prompt(text: str) -> str:
     """The first fenced block after "The system prompt is:", as the record states it."""
     m = re.search(r"The system\s+prompt is:\s*```\n(.*?)```", text, re.DOTALL)
     if m is None:
-        raise SystemExit("ADR 0012 has no system prompt block")
+        raise SystemExit("ADR 0015 has no system prompt block")
     return m.group(1).strip()
 
 
@@ -70,6 +72,8 @@ def compute(text: str) -> dict:
     for name in M2_RUNS:
         rows = [json.loads(line) for line in (RESULTS / name).read_text(encoding="utf-8").splitlines()]
         calls_per_run.append(sum(len(r["calls"]) for r in rows))
+    smoke = json.loads((RESULTS / SMOKE).read_text(encoding="utf-8").splitlines()[0])
+    outs = [k["output_tokens"] for k in smoke["calls"] if k["label"] == "consolidate"]
     c = cost()
     design = c["grid"][(CHOSEN_N, CONSOLIDATOR, SUMMARY_TOKENS)]
     return dict(histories=len(sessions_per_history), sessions=sum(sessions_per_history),
@@ -81,46 +85,56 @@ def compute(text: str) -> dict:
                 words_to_tokens=WORDS_ASKED * tokens / words,
                 consolidate=design["consolidate"], total=design["total"], share=design["share"],
                 gpt4o_500_share=c["grid"][(CHOSEN_N, "gpt-4o-2024-08-06", 500)]["share"],
-                check=c["check"][SUMMARY_TOKENS])
+                check=c["check"][SUMMARY_TOKENS],
+                smoke_id=smoke["question_id"], smoke_calls=len(outs), smoke_first=outs[0], smoke_last=outs[-1],
+                smoke_growth=(outs[-1] - outs[0]) / (len(outs) - 1), smoke_summary=smoke["summary_tokens"],
+                smoke_sources=len(smoke["sources"]), smoke_over=smoke["over_budget"], smoke_correct=smoke["correct"],
+                smoke_cost=smoke["strategy_cost_usd"],
+                hours_one_thread=(sum(sessions_per_history) + list_order) * SECONDS_PER_CALL / 3600)
 
 
 def claims(f: dict) -> list[Claim]:
     return [
-        Claim("0012", "histories measured", r"Measured on the (\d+) histories of 0010", (f["histories"],)),
-        Claim("0012", "sessions: total, min, max", r"([\d,]+) sessions, (\d+) to (\d+) per history",
-              (f["sessions"], f["sessions_min"], f["sessions_max"])),
-        Claim("0012", "largest session / history", r"largest session holds ([\d,]+) tokens and the largest history ([\d,]+)",
+        Claim("0015", "sessions: total, min, max", r"the ([\d,]+) sessions in the (\d+) histories, (\d+) to (\d+) per history",
+              (f["sessions"], f["histories"], f["sessions_min"], f["sessions_max"])),
+        Claim("0015", "largest session / history", r"largest session at ([\d,]+) tokens and the largest history at (\d[\d,]*\d)",
               (f["largest_session"], f["largest_history"])),
-        Claim("0012", "context length", r"takes ([\d,]+) tokens of context", kind="external",
+        Claim("0015", "context length", r"the ([\d,]+)-token context of the model", kind="external",
               note="OpenRouter /api/v1/models, 2026-10-03"),
-        Claim("0012", "prices in / out", r"\$([\d.]+) per million input tokens and \$([\d.]+) per million output",
+        Claim("0015", "prices in / out", r"prices of \$([\d.]+) and \$([\d.]+) per million tokens",
               kind="external", note="OpenRouter /api/v1/models, 2026-10-03"),
-        Claim("0012", "instruction shorter than 0010's", r"instruction is shorter than its (\d+) tokens",
-              f["prompt_tokens"] < PROMPT, note=f"prompt counts {f['prompt_tokens']} tokens"),
-        Claim("0012", "the prompt in code is the record's", r"The system\s+prompt is:",
+        Claim("0015", "smoke test: question, sessions", r"On `([0-9a-f]{8})`, (\d+) sessions",
+              (f["smoke_id"], f["smoke_calls"])),
+        Claim("0015", "smoke test: growth per session", r"grew by about (\d+) tokens a session",
+              (round(f["smoke_growth"]),), kind="approx"),
+        Claim("0015", "smoke test: first and last output", r"([\d,]+) tokens after the first and ([\d,]+) after the last",
+              (f["smoke_first"], f["smoke_last"])),
+        Claim("0015", "smoke test: summary shown", r"the summary shown to the answering model held ([\d,]+) tokens",
+              (f["smoke_summary"],)),
+        Claim("0015", "smoke test: window empty, over budget, right",
+              r"the window was empty, `sources` held one id, and the row was over budget. The answer was right",
+              f["smoke_sources"] == 1 and f["smoke_over"] and f["smoke_correct"] is True),
+        Claim("0015", "smoke test: cost of the question", r"cost \$([\d.]+) for the question",
+              (f"{f['smoke_cost']:.2f}",)),
+        Claim("0015", "six-session check", r"from 630 to 2,165 tokens .* from 121 to 664 tokens", kind="external",
+              note="measured in session 2026-10-03, not reproducible: the model is not deterministic"),
+        Claim("0015", "the prompt in code is the record's", r"The system\s+prompt is:",
               f["prompt_in_code"], note="memory.CONSOLIDATION_SYSTEM_PROMPT"),
-        Claim("0012", "S in code is the record's", r"The target size S is ([\d,]+) tokens",
-              (SUMMARY_TARGET_TOKENS,), note="memory.SUMMARY_TARGET_TOKENS"),
-        Claim("0012", "750 words is about 1000 tokens", r"asks for (\d+) words, about ([\d,]+) tokens",
+        Claim("0015", "S in code is the record's", r"The size S is ([\d,]+) tokens", (SUMMARY_TARGET_TOKENS,),
+              note="memory.SUMMARY_TARGET_TOKENS"),
+        Claim("0015", "750 words is about 1000 tokens", r"asks for (\d+) words, about ([\d,]+) tokens",
               (WORDS_ASKED, f["words_to_tokens"]), kind="approx",
               note=f"{f['words_to_tokens']:.0f} tokens at the dataset's words-per-token"),
-        Claim("0012", "tokens per word in the dataset", r"this dataset's ([\d.]+) tokens per word",
+        Claim("0015", "tokens per word in the dataset", r"this dataset's ([\d.]+) tokens per word",
               (round(f["words_to_tokens"] / WORDS_ASKED, 1),)),
-        Claim("0012", "consolidation / total / share at S=1000",
-              r"puts consolidation at \$([\d.]+) and the whole comparison at \$([\d.]+), (\d+)% of the cap",
-              (f"{f['consolidate']:.2f}", f"{f['total']:.2f}", round(100 * f["share"]))),
-        Claim("0012", "gpt-4o at S=500, share of cap", r"fits the cap only with S = 500, at (\d+)%",
-              (round(100 * f["gpt4o_500_share"]),)),
-        Claim("0012", "rewrites a first-session fact survives", r"survived up to (\d+) rewrites",
-              (f["sessions_max"] - 1,)),
-        Claim("0012", "gpt-4o check at S=1000", r"\$([\d.]+) at S = 1000", (f"{f['check']:.2f}",)),
-        Claim("0012", "consolidation calls: all, clock, list",
-              r"([\d,]+) consolidation calls, ([\d,]+) in clock order and ([\d,]+) in list order",
-              (f["clock_calls"] + f["list_calls"], f["clock_calls"], f["list_calls"])),
-        Claim("0012", "calls per M2 run", r"against ([\d,]+) calls in each of M2's two runs",
-              (f["calls_per_m2_run"][0],), note=f"runs: {f['calls_per_m2_run']}"),
-        Claim("0012", "both M2 runs made the same number of calls", r"in each of M2's two runs",
-              len(set(f["calls_per_m2_run"])) == 1),
+        Claim("0015", "prompt tokens (information)", r"The system\s+prompt is:", True,
+              note=f"prompt counts {f['prompt_tokens']} tokens; 0010's model assumed {PROMPT}"),
+        Claim("0015", "gpt-4o check at S=1000", r"\$([\d.]+) at S = 1000", (f"{f['check']:.2f}",)),
+        Claim("0015", "consolidation calls and hours", r"the ([\d,]+) consolidation calls take about (\d+) hours in one thread",
+              (f["clock_calls"] + f["list_calls"], round(f["hours_one_thread"])),
+              note=f"at {SECONDS_PER_CALL} s per call, measured in session"),
+        Claim("0015", "0010 figures at S=1000 (information)", r"0010 stands\.", True,
+              note=f"estimate_cost.py: consolidation ${f['consolidate']:.2f}, total ${f['total']:.2f}, {f['share']:.0%} of cap"),
     ]
 
 

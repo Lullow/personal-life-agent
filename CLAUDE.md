@@ -47,7 +47,7 @@ pip install -e '.[eval]'
 .venv/bin/python evals/longmemeval.py --strategy retrieval --dry-run   # RetrievalMemory, offline
 .venv/bin/python evals/verify_adr_numbers.py        # recompute every figure in ADRs 0004–0009
 .venv/bin/python evals/verify_adr_0011.py           # the same for ADR 0011
-.venv/bin/python evals/verify_adr_0012.py           # the same for ADR 0012
+.venv/bin/python evals/verify_adr_0015.py           # the same for ADR 0015
 .venv/bin/python evals/results_table.py --check    # every figure in docs/results.md
 
 # Run
@@ -235,11 +235,12 @@ Three implementations, in this order, all built (`docs/vg-project.md`).
    baseline should fail at. Its rules, constants included, are fixed by ADR
    0011 and are not tuned to a result.
 3. `ConsolidatingMemory` — **built.** A rolling summary rewritten by
-   `gpt-4o-mini` in `end_session()`, shown first as an assistant turn, then
-   the most recent raw turns that fit. Raw turns are kept. Its design, how a
-   summary counts toward recall, and where its clock comes from are fixed by
-   ADRs 0012–0014; the prompt lives in `memory.py`, not `prompts.py`, and is
-   not tuned to a result. The harness builds it with a consolidator client;
+   `gpt-4o-mini` in `end_session()`, held to S = 1000 tokens (one re-ask,
+   then a cut), shown first as an assistant turn, then the most recent raw
+   turns that fit. Raw turns are kept. Its design, how a summary counts
+   toward recall, and where its clock comes from are fixed by ADRs 0015
+   (superseding 0012), 0013 and 0014; the prompt lives in `memory.py`, not
+   `prompts.py`, and is not tuned to a result. The harness builds it with a consolidator client;
    the agent cannot be switched to it yet (it does not hand its client to
    its memory).
 
@@ -306,5 +307,5 @@ The evaluation must therefore run **headless**: `evals/longmemeval.py` must
 drive the memory module through a thin harness, not through
 `ConversationAgent.send()`, and the agent must never appear in the measured
 path. It reads its questions from `evals/longmemeval_questions.json` and its
-replay rules from `evals/verify_adr_numbers.py`; ADRs 0004–0009 and 0011–0014
-are its specification.
+replay rules from `evals/verify_adr_numbers.py`; ADRs 0004–0009, 0011 and
+0013–0015 are its specification.

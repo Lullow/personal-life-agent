@@ -1,11 +1,11 @@
-"""Run a memory strategy headless on LongMemEval, under ADRs 0004–0009 and 0011–0014.
+"""Run a memory strategy headless on LongMemEval, under ADRs 0004–0009, 0011 and 0013–0015.
 
 Each question's history is replayed into a fresh strategy (0004), recalled at
 23:59 on the question's day, answered by the model from what came back, and
 graded (0008). Per question it logs recall and precision (0009), the distance
 from the newest evidence to the question (0005), the tokens recalled against
 the budget (0007), and what every model call cost (0006), each call priced at
-its own model (0012). For RetrievalMemory it also logs recall with only the
+its own model (0015). For RetrievalMemory it also logs recall with only the
 user turns written (0011); for ConsolidatingMemory, how much of the evidence
 the consolidator read (0013). The agent is never in the path: no
 ConversationAgent, no prompts.py.
@@ -63,15 +63,15 @@ from life_agent.llm.client import LLMClient  # noqa: E402
 QUESTIONS = ROOT / "evals" / "longmemeval_questions.json"
 RUNS = ROOT / "data" / "longmemeval" / "runs"
 MODEL = "openai/gpt-4o-2024-08-06"  # ADR 0008: the dated id, never an alias
-CONSOLIDATOR_MODEL = "openai/gpt-4o-mini-2024-07-18"  # ADR 0012, as 0010 assumed
+CONSOLIDATOR_MODEL = "openai/gpt-4o-mini-2024-07-18"  # ADR 0015, as 0010 assumed
 ATTEMPTS = 3                        # ADR 0008: a call that returns None is tried twice more
 # Prices in USD per million tokens, by model. External: OpenRouter, 2026-09-26
-# (0008) and 2026-10-03 (0012). PRICE_IN/PRICE_OUT stay as the answering
+# (0008) and 2026-10-03 (0015). PRICE_IN/PRICE_OUT stay as the answering
 # model's for the scripts that import them.
 PRICES = {MODEL: (2.50, 10.00), CONSOLIDATOR_MODEL: (0.15, 0.60)}
 PRICE_IN, PRICE_OUT = PRICES[MODEL]
 # ADR 0006: the calls that count as a strategy's cost. "grade" never does, and
-# neither does the list-order replay's consolidation (0009, 0012).
+# neither does the list-order replay's consolidation (0009, 0015).
 STRATEGY_LABELS = ("answer", "consolidate")
 LIST_ORDER_LABEL = "consolidate-list-order"
 
@@ -91,7 +91,7 @@ STRATEGIES: dict[str, Factory] = {
     "recent-turns": lambda counter, _: RecentTurnsMemory(max_turns=None, token_counter=counter),
     # ADR 0011: BM25 over every record, built with the counter and nothing else.
     "retrieval": lambda counter, _: RetrievalMemory(token_counter=counter),
-    # ADR 0012: a rolling summary from the consolidator, over a recent window.
+    # ADR 0015: a rolling summary from the consolidator, over a recent window.
     "consolidating": lambda counter, llm: ConsolidatingMemory(llm, token_counter=counter),
 }
 # ADR 0011: the strategies whose recall is also computed with only user turns written.
@@ -112,9 +112,10 @@ class DryRunClient:
 
 
 def dry_run_summary(counter: TokenCounter) -> str:
-    """A placeholder of about S tokens, so the window is about the real run's size (0013)."""
+    """A placeholder of at most S tokens: the window is about the real run's size (0013),
+    and the dry run neither asks again nor cuts (0015)."""
     piece, text = "(dry run) notes. ", ""
-    while counter.count(text) < SUMMARY_TARGET_TOKENS:
+    while counter.count(text + piece) <= SUMMARY_TARGET_TOKENS:
         text += piece
     return text
 
@@ -264,7 +265,7 @@ def run_question(x: dict, position: int, name: str, counter: TokenCounter,
     answer_llm = recording("answer", "answer")
     grade_llm = recording("grade", "grade")
     factory = STRATEGIES[name]
-    # ADR 0012: the clock-order replay's consolidation is the strategy's cost;
+    # ADR 0015: the clock-order replay's consolidation is the strategy's cost;
     # the list-order replay's is logged apart and is not.
     build = lambda c: factory(c, recording("consolidate", "consolidate"))  # noqa: E731
     build_list = lambda c: factory(c, recording("consolidate", LIST_ORDER_LABEL))  # noqa: E731
@@ -282,6 +283,7 @@ def run_question(x: dict, position: int, name: str, counter: TokenCounter,
                      "evidence_reached", "ku_breakdown", "recall_list_order", "evidence_reached_list_order",
                      "recall_user_turns", "evidence_reached_user_turns", "evidence_consolidated",
                      "evidence_consolidated_or_reached", "ku_breakdown_consolidated", "summary_tokens",
+                     "summary", "summary_reasked", "summary_truncated", "consolidations",
                      "distance_tokens", "long_term", "history_tokens", "records")
     row.update(dict.fromkeys(recall_fields))
     row.update(answer_attempts=0, answer=None, answer_is_string=None, verdict=None, correct=None,
@@ -305,7 +307,7 @@ def run_question(x: dict, position: int, name: str, counter: TokenCounter,
             "records": len(records),
         })
         # ADR 0009: only knowledge-update questions differ between the two orders.
-        # ADR 0009, 0012: a strategy that calls a model while replaying is replayed
+        # ADR 0009, 0015: a strategy that calls a model while replaying is replayed
         # in list order on the pilot questions only.
         if x["question_type"] == KU:
             row["ku_breakdown"] = ku_breakdown(x, retrieval.sources)
@@ -326,10 +328,16 @@ def run_question(x: dict, position: int, name: str, counter: TokenCounter,
             row["evidence_consolidated"] = len(c & evidence) / len(evidence)
             row["evidence_consolidated_or_reached"] = bool(both & evidence)
             row["summary_tokens"] = sum(counter.count(s.content) for s in shown)
+            # ADR 0015: the text the model saw, and how often the size had to be held.
+            row["summary"] = "\n\n".join(s.content for s in shown)
+            done = getattr(memory, "consolidations", [])
+            row["consolidations"] = len(done)
+            row["summary_reasked"] = sum(c.reasked for c in done)
+            row["summary_truncated"] = sum(c.truncated for c in done)
             if x["question_type"] == KU:
                 row["ku_breakdown_consolidated"] = ku_breakdown(x, both)
     except ConsolidationError as e:
-        # ADR 0012: the question is an error and is run again before any figure is reported.
+        # ADR 0015: the question is an error and is run again before any figure is reported.
         row["error"] = str(e)
         row["calls"] = [asdict(c) for c in log]
         return row
@@ -364,7 +372,7 @@ def usd(tokens_in: float, tokens_out: float, model: str = MODEL) -> float:
 
 
 def cost_of(calls: list[LLMCall] | list[dict]) -> float:
-    """Every call at its own model's price (ADR 0012). A call without a model is the answering model's."""
+    """Every call at its own model's price (ADR 0015). A call without a model is the answering model's."""
     total = 0.0
     for c in calls:
         c = asdict(c) if isinstance(c, LLMCall) else c
@@ -427,6 +435,9 @@ def summarize(rows: list[dict], pool_distances: dict[str, list[int]], dry_run: b
                  f"{sum(r['evidence_consolidated_or_reached'] for r in summarised)} of {len(summarised)}"),
                 ("summary tokens, mean / max", f"{mean(r['summary_tokens'] for r in summarised):,.0f} / "
                  f"{max(r['summary_tokens'] for r in summarised):,}"),
+                ("consolidations asked again / cut / all (ADR 0015)",
+                 f"{sum(r['summary_reasked'] for r in summarised)} / {sum(r['summary_truncated'] for r in summarised)}"
+                 f" / {sum(r['consolidations'] for r in summarised)}"),
             ]
         lines += [
             ("messages recalled, mean / max", f"{mean(len(r['sources']) for r in measured):,.0f} / {max(len(r['sources']) for r in measured):,}"),
@@ -505,7 +516,7 @@ def main(argv: list[str] | None = None) -> int:
         inner["consolidate"] = real_client(CONSOLIDATOR_MODEL) if consolidates else None
     # The row's model fields stay None in a dry run, as before; the calls are
     # still logged under the model they would be made with, so that a dry
-    # run's cost is priced as the real run's will be (ADR 0012).
+    # run's cost is priced as the real run's will be (ADR 0015).
     meta = {"strategy": args.strategy, "model": None if args.dry_run else MODEL,
             "consolidator": CONSOLIDATOR_MODEL if consolidates and not args.dry_run else None,
             "dry_run": args.dry_run, "commit": git_commit(), "budget_tokens": DEFAULT_BUDGET_TOKENS}

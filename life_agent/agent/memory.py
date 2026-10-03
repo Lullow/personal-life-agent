@@ -47,31 +47,47 @@ DEFAULT_BUDGET_TOKENS = 8000
 BM25_K1 = 1.2
 BM25_B = 0.75
 
-# The consolidator's target size S, in tokens (ADR 0012).  A target the prompt
-# asks for in words, not a cap: nothing truncates, and the evaluation reports
-# the size the model actually wrote.
+# The consolidator's size S, in tokens (ADR 0015).  The prompt asks for it in
+# words; the strategy holds it in tokens, by asking once more and then by
+# cutting, so the summary never takes more than this of the budget.  ADR 0012
+# had it as a target only, and the model wrote eight times that.
 SUMMARY_TARGET_TOKENS = 1000
 
 # A consolidation call that returns None is tried this many times in all,
-# as an answer call is (ADR 0008, 0012).
+# as an answer call is (ADR 0008, 0015).
 CONSOLIDATION_ATTEMPTS = 3
 
-# ADR 0012, copied from the record's code block.  Fixed before the strategy's
-# first dry run, like BM25's constants: the dry run shows this strategy's
-# recall without a model call (ADR 0013), so the prompt is not there to be
-# tuned either.  It lives here and not in prompts.py because it is the memory
-# strategy's, not the agent's, and it runs outside the turn: the reply is one
-# string, and nothing dispatches on it.
+# ADR 0015, copied from the record's code blocks.  Fixed before the strategy's
+# first run under that record, like BM25's constants: the dry run shows this
+# strategy's recall without a model call (ADR 0013), so the prompt is not
+# there to be tuned either.  It lives here and not in prompts.py because it is
+# the memory strategy's, not the agent's, and it runs outside the turn: the
+# reply is one string, and nothing dispatches on it.
 CONSOLIDATION_SYSTEM_PROMPT = (
     "You keep the assistant's notes about its earlier conversations with the user.\n"
-    "You are given the notes so far and the transcript of one more conversation.\n"
-    "Rewrite the notes so that they also cover this conversation. Keep concrete\n"
-    "facts: names, numbers, dates, places, plans, preferences, and what the user\n"
-    "asked for. When a fact has changed, write the current value in place of the\n"
-    "old one. Keep the notes in the language of the conversation, and write them so\n"
-    "that they can be read on their own, in at most 750 words. Reply with a JSON\n"
-    'object: {"summary": "<the notes>"}.'
+    "Hard limit: the notes are at most 750 words. Write plain prose or short lines:\n"
+    "no links, no markdown, no lists of products or sources. You are given the\n"
+    "notes so far and the transcript of one more conversation. Rewrite the notes so\n"
+    "that they also cover this conversation, within the limit: keep what is about\n"
+    "the user (names, numbers, dates, places, plans, preferences, what they asked\n"
+    "for) and drop detail about anything else first. When a fact has changed, write\n"
+    "the current value in place of the old one. Keep the notes in the language of\n"
+    'the conversation. Reply with a JSON object: {"summary": "<the notes>"}.'
 )
+
+# The second call, when the first reply counts more than S (ADR 0015).
+CONSOLIDATION_REASK_MESSAGE = (
+    "These notes are {words} words, over the limit of 750. Rewrite them to at\n"
+    "most 750 words: keep what is about the user and the current value of every\n"
+    "fact, and drop detail about anything else first. Reply with a JSON object:\n"
+    '{{"summary": "<the notes>"}}.\n'
+    "\n"
+    "Notes:\n"
+    "{notes}"
+)
+
+# Where a cut may fall: after a sentence end or a line break (ADR 0015).
+_SENTENCE_END = re.compile(r"[.!?]|\n")
 
 RecordKind = Literal["message", "outcome", "summary"]
 Role = Literal["user", "assistant"]
@@ -381,7 +397,7 @@ class ConsolidationError(RuntimeError):
 
 
 def consolidation_message(previous: str | None, turns: list[MemoryRecord]) -> str:
-    """The user message of a consolidation call, as ADR 0012 states it.
+    """The user message of a consolidation call, as ADR 0015 states it.
 
     The session goes in as quoted transcript, not as chat turns: the model is
     to summarise the conversation, not continue it, and an instruction inside
@@ -389,6 +405,39 @@ def consolidation_message(previous: str | None, turns: list[MemoryRecord]) -> st
     """
     transcript = "\n\n".join(f"{r.role}: {r.content}" for r in turns)
     return f"Notes so far:\n{previous or '(none)'}\n\nConversation to add:\n{transcript}"
+
+
+def cut_to_tokens(text: str, limit: int, counter: TokenCounter) -> str:
+    """Cut *text* after the last sentence end at which it counts at most *limit*.
+
+    A sentence end is ``.``, ``!``, ``?`` or a line break (ADR 0015).  If no
+    sentence end leaves anything, the cut falls after the last word that fits.
+    Works with any counter, since it only ever counts: the candidates are
+    tried from the end, so the first that fits is the longest.
+    """
+    if counter.count(text) <= limit:
+        return text
+    ends = [m.end() for m in _SENTENCE_END.finditer(text)]
+    for end in reversed(ends):
+        candidate = text[:end].rstrip()
+        if candidate and counter.count(candidate) <= limit:
+            return candidate
+    words = text.split()
+    for n in range(len(words) - 1, 0, -1):
+        candidate = " ".join(words[:n])
+        if counter.count(candidate) <= limit:
+            return candidate
+    return ""
+
+
+@dataclass(frozen=True)
+class Consolidation:
+    """What one :meth:`ConsolidatingMemory.end_session` did, for the evaluation's row."""
+
+    session_id: str
+    tokens: int
+    reasked: bool
+    truncated: bool
 
 
 class ConsolidatingMemory:
@@ -399,13 +448,18 @@ class ConsolidatingMemory:
     :class:`RetrievalMemory` would return both.  What it pays is a model call
     per session and a window S tokens smaller than the baseline's.
 
-    Its rules are decided in ADRs 0012, 0013 and 0014 and must not drift:
+    Its rules are decided in ADRs 0015, 0013 and 0014 and must not drift:
 
     * **Consolidation happens in** :meth:`end_session` **and nowhere else.**  One
       call reads the notes so far and the session's ``kind="message"`` records
       as quoted transcript and writes the next notes.  An ``outcome`` never
       enters the call and is never paraphrased.  Raw records are kept: the
       summary is a view over them, not a replacement.
+    * **The summary never counts more than S tokens.**  A reply over S is
+      asked for once more with its word count; a second reply over S is cut
+      after the last sentence end that fits.  Both are recorded in
+      :attr:`consolidations`, since a cut summary is one the model did not
+      make.  Under ADR 0012, which only asked, the model wrote eight times S.
     * **Recall is the newest visible summary first, then the window.**  The
       summary is an assistant message; the raw records that fit in the rest of
       the budget follow in the order they were written, filled backwards from
@@ -430,11 +484,17 @@ class ConsolidatingMemory:
         self._pending: list[MemoryRecord] = []
         self._latest_summary: MemoryRecord | None = None
         self._clock: datetime | None = None
+        self._consolidations: list[Consolidation] = []
 
     @property
     def records(self) -> list[MemoryRecord]:
         """Everything written or summarised so far, oldest first.  For tests and the eval."""
         return list(self._records)
+
+    @property
+    def consolidations(self) -> list[Consolidation]:
+        """One entry per summary made, in order: its size, and whether it was asked again or cut."""
+        return list(self._consolidations)
 
     def write(self, record: MemoryRecord) -> None:
         self._records.append(record)
@@ -486,24 +546,21 @@ class ConsolidatingMemory:
             raise ValueError(f"a summary for session {session_id!r} already exists")
 
         previous = self._latest_summary
-        messages = [
-            {
-                "role": "user",
-                "content": consolidation_message(
-                    previous.content if previous else None, self._pending
-                ),
-            }
-        ]
-        text: str | None = None
-        for _ in range(CONSOLIDATION_ATTEMPTS):
-            reply = self._llm.chat_json(CONSOLIDATION_SYSTEM_PROMPT, messages)
-            if reply is not None and isinstance(reply.get("summary"), str) and reply["summary"].strip():
-                text = reply["summary"]
-                break
-        if text is None:
-            raise ConsolidationError(
-                f"consolidating session {session_id!r} failed {CONSOLIDATION_ATTEMPTS} times"
+        text = self._ask(
+            session_id,
+            consolidation_message(previous.content if previous else None, self._pending),
+        )
+        # ADR 0015: over S, ask once more with the number; still over, cut.
+        reasked = truncated = False
+        if self._counter.count(text) > SUMMARY_TARGET_TOKENS:
+            reasked = True
+            text = self._ask(
+                session_id,
+                CONSOLIDATION_REASK_MESSAGE.format(words=len(text.split()), notes=text),
             )
+        if self._counter.count(text) > SUMMARY_TARGET_TOKENS:
+            truncated = True
+            text = cut_to_tokens(text, SUMMARY_TARGET_TOKENS, self._counter)
 
         assert self._clock is not None  # a pending record has set it
         summary = MemoryRecord(
@@ -518,5 +575,19 @@ class ConsolidatingMemory:
         )
         self._records.append(summary)
         self._latest_summary = summary
+        self._consolidations.append(
+            Consolidation(session_id, self._counter.count(text), reasked, truncated)
+        )
         self._pending = []
         return None
+
+    def _ask(self, session_id: str, message: str) -> str:
+        """One consolidation call, tried up to CONSOLIDATION_ATTEMPTS times."""
+        messages = [{"role": "user", "content": message}]
+        for _ in range(CONSOLIDATION_ATTEMPTS):
+            reply = self._llm.chat_json(CONSOLIDATION_SYSTEM_PROMPT, messages)
+            if reply is not None and isinstance(reply.get("summary"), str) and reply["summary"].strip():
+                return reply["summary"]
+        raise ConsolidationError(
+            f"consolidating session {session_id!r} failed {CONSOLIDATION_ATTEMPTS} times"
+        )
