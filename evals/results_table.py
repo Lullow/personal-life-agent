@@ -22,7 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from evals.estimate_cost import FRAMING_PER_CALL, FRAMING_PER_MESSAGE  # noqa: E402
-from evals.longmemeval import PRICE_IN, PRICE_OUT, STRATEGY_LABELS, usd  # noqa: E402
+from evals.longmemeval import MODEL, PRICE_IN, PRICE_OUT, STRATEGY_LABELS, cost_of, usd  # noqa: E402
 from evals.verify_adr_numbers import KU, ROOT, SSU, TYPES, Claim, fmt, judge  # noqa: E402
 
 RESULTS = ROOT / "evals" / "results"
@@ -31,8 +31,11 @@ DOC = ROOT / "docs" / "results.md"
 RUNS = {
     "recent-turns": "recent-turns-20261002-193902.jsonl",
     "retrieval": "retrieval-20261002-193417.jsonl",
+    # M3: set to the run's file once it is committed. A missing file leaves the row out.
+    "consolidating": "consolidating-M3.jsonl",
 }
-NAMES = {"recent-turns": "RecentTurnsMemory", "retrieval": "RetrievalMemory"}
+RUNS = {name: file for name, file in RUNS.items() if (RESULTS / file).exists()}
+NAMES = {"recent-turns": "RecentTurnsMemory", "retrieval": "RetrievalMemory", "consolidating": "ConsolidatingMemory"}
 GROUPS = ("neither", "earlier", "later", "both")
 
 
@@ -41,9 +44,17 @@ def rows(name: str) -> list[dict]:
 
 
 def framing(r: dict, label: str) -> int:
-    """Input tokens the provider adds to one call: the system prompt and the question count as messages."""
+    """Input tokens the provider adds to one call: the system prompt and the question count as messages.
+
+    A consolidation call is the system prompt and one user message (ADR 0015)."""
     messages = 2 + len(r["sources"]) if label == "answer" else 2
     return FRAMING_PER_MESSAGE * messages + FRAMING_PER_CALL
+
+
+def priced(calls: list[tuple[dict, dict]], with_framing: bool = False) -> float:
+    """The calls' cost, each at its own model's price (ADR 0015); a call without a model is the answering model's."""
+    return sum(usd(c["input_tokens"] + (framing(r, c["label"]) if with_framing else 0), c["output_tokens"],
+                   c.get("model") or MODEL) for r, c in calls)
 
 
 def cell(rs: list[dict]) -> dict:
@@ -52,7 +63,6 @@ def cell(rs: list[dict]) -> dict:
     paid = [(r, c) for r in rs for c in r["calls"] if c["label"] in STRATEGY_LABELS and not c["failed"]]
     tin = sum(c["input_tokens"] for _, c in paid)
     tout = sum(c["output_tokens"] for _, c in paid)
-    framed = tin + sum(framing(r, c["label"]) for r, c in paid)
     out = dict(
         n=len(rs), errors=len(rs) - len(ok),
         correct=sum(r["correct"] for r in ok),
@@ -62,17 +72,42 @@ def cell(rs: list[dict]) -> dict:
         messages=mean(len(r["sources"]) for r in rs),
         tokens_used=mean(r["tokens_used"] for r in rs),
         input_per_q=tin / len(rs), output_per_q=tout / len(rs),
-        cost_per_q=usd(tin, tout) / len(rs), framed_per_q=usd(framed, tout) / len(rs),
+        cost_per_q=priced(paid) / len(rs), framed_per_q=priced(paid, with_framing=True) / len(rs),
         idk=sum("not know" in (r["answer"] or "").lower() for r in ok),
     )
     if rs[0]["question_type"] == KU:
         out["breakdown"] = {g: (sum(r["ku_breakdown"] == g for r in rs),
                                sum(r["ku_breakdown"] == g and bool(r["correct"]) for r in rs)) for g in GROUPS}
         out["apart"] = sum(r["ku_breakdown"] is None for r in rs)
-        out["reached_list_order"] = sum(r["evidence_reached_list_order"] for r in rs)
+        # ADR 0009: a strategy with model calls is replayed in list order on the pilot questions only.
+        listed = [r for r in rs if r["evidence_reached_list_order"] is not None]
+        out["reached_list_order"] = sum(r["evidence_reached_list_order"] for r in listed)
+        out["listed"] = len(listed)
     if rs[0]["recall_user_turns"] is not None:
         out["reached_user_turns"] = sum(r["evidence_reached_user_turns"] for r in rs)
         out["recall_user_turns"] = mean(r["recall_user_turns"] for r in rs)
+    if rs[0].get("evidence_consolidated") is not None:
+        # ADRs 0013, 0015–0017: the consolidating strategy's own figures.
+        cons = [(r, c) for r, c in paid if c["label"] == "consolidate"]
+        answer = [(r, c) for r, c in paid if c["label"] == "answer"]
+        out.update(
+            consolidated=mean(r["evidence_consolidated"] for r in rs),
+            consolidated_or_reached=sum(r["evidence_consolidated_or_reached"] for r in rs),
+            summary_tokens=mean(r["summary_tokens"] for r in rs),
+            consolidations=sum(r["consolidations"] for r in rs),
+            reasked=sum(r["summary_reasked"] for r in rs),
+            cut=sum(r["summary_truncated"] for r in rs),
+            skipped=sum(r["consolidations_failed"] for r in rs),
+            consolidate_calls=len(cons),
+            consolidate_in_per_q=sum(c["input_tokens"] for _, c in cons) / len(rs),
+            consolidate_out_per_q=sum(c["output_tokens"] for _, c in cons) / len(rs),
+            consolidate_cost_per_q=priced(cons) / len(rs),
+            answer_cost_per_q=priced(answer) / len(rs),
+        )
+        if rs[0]["question_type"] == KU:
+            out["breakdown_consolidated"] = {
+                g: (sum(r["ku_breakdown_consolidated"] == g for r in rs),
+                    sum(r["ku_breakdown_consolidated"] == g and bool(r["correct"]) for r in rs)) for g in GROUPS}
     return out
 
 
@@ -83,8 +118,7 @@ def compute() -> dict:
         f["runs"][name] = dict(commit={r["commit"] for r in rs}, model={r["model"] for r in rs},
                                calls=sum(len(r["calls"]) for r in rs),
                                failed=sum(c["failed"] for r in rs for c in r["calls"]),
-                               cost=usd(sum(c["input_tokens"] for r in rs for c in r["calls"]),
-                                        sum(c["output_tokens"] for r in rs for c in r["calls"])))
+                               cost=cost_of([c for r in rs for c in r["calls"]]))
         for t in TYPES:
             f["cells"][(name, t)] = cell([r for r in rs if r["question_type"] == t])
     f["total_cost"] = sum(v["cost"] for v in f["runs"].values())
@@ -120,12 +154,29 @@ def print_tables(f: dict) -> None:
     print()
     for name in RUNS:
         s, k = c[(name, SSU)], c[(name, KU)]
-        print(f"{NAMES[name]}: 'I do not know' answers {s['idk']} + {k['idk']}; list-order reach on KU {k['reached_list_order']} of {k['n']}"
+        print(f"{NAMES[name]}: 'I do not know' answers {s['idk']} + {k['idk']}; list-order reach on KU {k['reached_list_order']} of {k['listed']}"
               + (f"; user-turn reach {s['reached_user_turns']} of {s['n']} and {k['reached_user_turns']} of {k['n']}" if "reached_user_turns" in s else ""))
+    if ("consolidating", SSU) in c:
+        s, k = c[("consolidating", SSU)], c[("consolidating", KU)]
+        print()
+        print("ConsolidatingMemory (ADRs 0013, 0015–0017)")
+        print("| | single-session-user | knowledge-update |")
+        print("|---|---:|---:|")
+        print(f"| evidence consolidated, mean | {s['consolidated']:.3f} | {k['consolidated']:.3f} |")
+        print(f"| evidence consolidated or reached | {s['consolidated_or_reached']} of {s['n']} | {k['consolidated_or_reached']} of {k['n']} |")
+        print(f"| summary tokens, mean | {s['summary_tokens']:,.0f} | {k['summary_tokens']:,.0f} |")
+        print(f"| consolidations: asked again / cut / skipped / all | {s['reasked']} / {s['cut']} / {s['skipped']} / {s['consolidations']} | {k['reasked']} / {k['cut']} / {k['skipped']} / {k['consolidations']} |")
+        print(f"| consolidation per question: calls, tokens in / out | {s['consolidate_calls'] / s['n']:.1f}, {s['consolidate_in_per_q']:,.0f} / {s['consolidate_out_per_q']:,.0f} | {k['consolidate_calls'] / k['n']:.1f}, {k['consolidate_in_per_q']:,.0f} / {k['consolidate_out_per_q']:,.0f} |")
+        print(f"| cost per question: answer + consolidation | ${s['answer_cost_per_q']:.4f} + ${s['consolidate_cost_per_q']:.4f} | ${k['answer_cost_per_q']:.4f} + ${k['consolidate_cost_per_q']:.4f} |")
+        print()
+        print("knowledge-update breakdown, consolidated or reached (ADR 0013): questions, correct")
+        print("| | " + " | ".join(GROUPS) + " | not two sessions |")
+        print("|---|" + "---:|" * (len(GROUPS) + 1))
+        print("| `ConsolidatingMemory` | " + " | ".join(f"{k['breakdown_consolidated'][g][0]}, {k['breakdown_consolidated'][g][1]}" for g in GROUPS) + f" | {k['apart']} |")
     print()
     for name, v in f["runs"].items():
         print(f"{name}: commit {fmt(sorted(v['commit']))}, model {fmt(sorted(v['model']))}, {v['calls']} calls, {v['failed']} failed, ${v['cost']:.4f} counted")
-    print(f"both runs: ${f['total_cost']:.2f} counted at ${PRICE_IN}/M in and ${PRICE_OUT}/M out")
+    print(f"all runs: ${f['total_cost']:.2f} counted, each call at its model's price (the answering model at ${PRICE_IN}/M in and ${PRICE_OUT}/M out)")
 
 
 def claims(f: dict) -> list[Claim]:
