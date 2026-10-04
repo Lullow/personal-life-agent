@@ -1,0 +1,188 @@
+SSU  1/61 c8c3f81d     reached=no  recall=0.00 tokens= 7826 ok correct=True
+SSU  2/61 ad7109d1     reached=no  recall=0.00 tokens= 7895 ok correct=False
+SSU  3/61 36580ce8     reached=no  recall=0.00 tokens= 7994 ok correct=False
+SSU  4/61 51a45a95     reached=no  recall=0.00 tokens= 7978 ok correct=True
+SSU  5/61 86f00804     reached=no  recall=0.00 tokens= 7953 ok correct=False
+SSU  6/61 6b168ec8     reached=no  recall=0.00 tokens= 7843 ok correct=True
+SSU  7/61 c14c00dd     reached=no  recall=0.00 tokens= 7852 ok correct=False
+SSU  8/61 8ebdbe50     reached=no  recall=0.00 tokens= 7812 ok correct=True
+SSU  9/61 95bcc1c8     reached=no  recall=0.00 tokens= 7627 ok correct=False
+SSU 10/61 66f24dbb     reached=no  recall=0.00 tokens= 7922 ok correct=False
+SSU 11/61 94f70d80     reached=no  recall=0.00 tokens= 7925 ok correct=False
+SSU 12/61 ccb36322     reached=no  recall=0.00 tokens= 7700 ok correct=False
+SSU 13/61 c5e8278d     reached=no  recall=0.00 tokens= 7810 ok correct=False
+SSU 14/61 726462e0     reached=no  recall=0.00 tokens= 7958 ok correct=False
+SSU 15/61 caf9ead2     reached=no  recall=0.00 tokens= 7889 ok correct=False
+SSU 16/61 7527f7e2     reached=no  recall=0.00 tokens= 7989 ok correct=False
+SSU 17/61 5d3d2817     reached=no  recall=0.00 tokens= 7688 ok correct=False
+SSU 18/61 545bd2b5     reached=no  recall=0.00 tokens= 7871 ok correct=True
+SSU 19/61 3f1e9474     reached=no  recall=0.00 tokens= 7761 ok correct=False
+SSU 20/61 faba32e5     reached=no  recall=0.00 tokens= 7376 ok correct=False
+SSU 21/61 60d45044     reached=no  recall=0.00 tokens= 7967 ok correct=False
+SSU 22/61 8a137a7f     reached=no  recall=0.00 tokens= 7628 ok correct=False
+SSU 23/61 c960da58     reached=no  recall=0.00 tokens= 7242 ok correct=False
+SSU 24/61 c19f7a0b     reached=no  recall=0.00 tokens= 7776 ok correct=False
+SSU 25/61 b86304ba     reached=yes recall=1.00 tokens= 7981 ok correct=False
+SSU 26/61 75499fd8     reached=no  recall=0.00 tokens= 7895 ok correct=False
+SSU 27/61 15745da0     reached=no  recall=0.00 tokens= 7705 ok correct=False
+SSU 28/61 311778f1     reached=no  recall=0.00 tokens= 7867 ok correct=False
+SSU 29/61 e01b8e2f     reached=no  recall=0.00 tokens= 7978 ok correct=False
+SSU 30/61 f8c5f88b     reached=no  recall=0.00 tokens= 7738 ok correct=False
+SSU 31/61 21436231     reached=no  recall=0.00 tokens= 7908 ok correct=False
+SSU 32/61 6ade9755     reached=yes recall=1.00 tokens= 7852 ok correct=True
+SSU 33/61 37d43f65     reached=no  recall=0.00 tokens= 7788 ok correct=False
+SSU 34/61 e47becba     reached=yes recall=1.00 tokens= 7413 ok correct=True
+SSU 35/61 577d4d32     reached=no  recall=0.00 tokens= 7862 ok correct=True
+SSU 36/61 76d63226     reached=no  recall=0.00 tokens= 7698 ok correct=False
+SSU 37/61 8550ddae     reached=no  recall=0.00 tokens= 7407 ok correct=False
+SSU 38/61 bc8a6e93     reached=no  recall=0.00 tokens= 7830 ok correct=False
+SSU 39/61 dccbc061     reached=no  recall=0.00 tokens= 7838 ok correct=False
+SSU 40/61 f4f1d8a4     reached=yes recall=1.00 tokens= 7853 ok correct=True
+SSU 41/61 1faac195     reached=no  recall=0.00 tokens= 7944 ok correct=False
+SSU 42/61 58ef2f1c     reached=yes recall=1.00 tokens= 7791 ok correct=True
+SSU 43/61 29f2956b     reached=no  recall=0.00 tokens= 7790 ok correct=False
+SSU 44/61 a06e4cfe     reached=no  recall=0.00 tokens= 7785 ok correct=False
+SSU 45/61 b320f3f8     reached=no  recall=0.00 tokens= 7931 ok correct=False
+SSU 46/61 4100d0a0     reached=yes recall=1.00 tokens= 7772 ok correct=False
+SSU 47/61 118b2229     reached=no  recall=0.00 tokens= 7991 ok correct=False
+SSU 48/61 25e5aa4f     reached=no  recall=0.00 tokens= 7884 ok correct=True
+SSU 49/61 853b0a1d     reached=no  recall=0.00 tokens= 7734 ok correct=False
+SSU 50/61 6f9b354f     reached=no  recall=0.00 tokens= 7818 ok correct=False
+SSU 51/61 d52b4f67     reached=no  recall=0.00 tokens= 7919 ok correct=False
+SSU 52/61 8e9d538c     reached=no  recall=0.00 tokens= 7773 ok correct=False
+SSU 53/61 0862e8bf     reached=no  recall=0.00 tokens= 7546 ok correct=False
+SSU 54/61 19b5f2b3     reached=no  recall=0.00 tokens= 7383 ok correct=True
+SSU 55/61 3d86fd0a     reached=no  recall=0.00 tokens= 7546 ok correct=False
+SSU 56/61 ec81a493     reached=no  recall=0.00 tokens= 7632 ok correct=True
+SSU 57/61 af8d2e46     reached=no  recall=0.00 tokens= 7814 ok correct=False
+SSU 58/61 4fd1909e     reached=no  recall=0.00 tokens= 7856 ok correct=False
+SSU 59/61 86b68151     reached=no  recall=0.00 tokens= 7843 ok correct=True
+SSU 60/61 3b6f954b     reached=no  recall=0.00 tokens= 7758 ok correct=False
+SSU 61/61 a82c026e     reached=no  recall=0.00 tokens= 7857 ok correct=False
+KU   1/61 07741c45     reached=no  recall=0.00 tokens= 7545 ok correct=False
+KU   2/61 b6019101     reached=yes recall=0.50 tokens= 7700 ok correct=True
+KU   3/61 6071bd76     reached=no  recall=0.00 tokens= 7938 ok correct=False
+KU   4/61 a2f3aa27     reached=no  recall=0.00 tokens= 7505 ok correct=False
+KU   5/61 c6853660     reached=no  recall=0.00 tokens= 7813 ok correct=False
+KU   6/61 b01defab     reached=no  recall=0.00 tokens= 7703 ok correct=False
+KU   7/61 0f05491a     reached=yes recall=0.50 tokens= 7989 ok correct=True
+KU   8/61 6aeb4375     reached=yes recall=0.50 tokens= 7797 ok correct=True
+KU   9/61 06db6396     reached=no  recall=0.00 tokens= 7916 ok correct=False
+KU  10/61 89941a94     reached=no  recall=0.00 tokens= 7809 ok correct=False
+KU  11/61 c4ea545c     reached=no  recall=0.00 tokens= 7989 ok correct=False
+KU  12/61 ce6d2d27     reached=no  recall=0.00 tokens= 7868 ok correct=False
+KU  13/61 08e075c7     reached=no  recall=0.00 tokens= 7904 ok correct=False
+KU  14/61 cf22b7bf     reached=no  recall=0.00 tokens= 7963 ok correct=False
+KU  15/61 69fee5aa     reached=no  recall=0.00 tokens= 7974 ok correct=False
+KU  16/61 7e974930     reached=yes recall=0.50 tokens= 7981 ok correct=True
+KU  17/61 ed4ddc30     reached=no  recall=0.00 tokens= 7983 ok correct=True
+KU  18/61 0e4e4c46     reached=yes recall=0.50 tokens= 7761 ok correct=True
+KU  19/61 affe2881     reached=no  recall=0.00 tokens= 7780 ok correct=False
+KU  20/61 031748ae     reached=no  recall=0.00 tokens= 7908 ok correct=False
+KU  21/61 603deb26     reached=no  recall=0.00 tokens= 7940 ok correct=True
+KU  22/61 5a4f22c0     reached=no  recall=0.00 tokens= 7880 ok correct=False
+KU  23/61 6a27ffc2     reached=no  recall=0.00 tokens= 7562 ok correct=False
+KU  24/61 3ba21379     reached=no  recall=0.00 tokens= 7815 ok correct=False
+KU  25/61 f9e8c073     reached=no  recall=0.00 tokens= 7722 ok correct=False
+KU  26/61 01493427     reached=no  recall=0.00 tokens= 7274 ok correct=False
+KU  27/61 59524333     reached=no  recall=0.00 tokens= 7742 ok correct=True
+KU  28/61 07741c44     reached=no  recall=0.00 tokens= 7862 ok correct=False
+KU  29/61 10e09553     reached=no  recall=0.00 tokens= 7827 ok correct=False
+KU  30/61 eace081b     reached=no  recall=0.00 tokens= 7973 ok correct=False
+KU  31/61 7a87bd0c     reached=no  recall=0.00 tokens= 7650 ok correct=True
+KU  32/61 45dc21b6     reached=no  recall=0.00 tokens= 7660 ok correct=False
+KU  33/61 7401057b     reached=no  recall=0.00 tokens= 7864 ok correct=False
+KU  34/61 9bbe84a2     reached=no  recall=0.00 tokens= 7911 ok correct=False
+KU  35/61 e61a7584     reached=no  recall=0.00 tokens= 7671 ok correct=False
+KU  36/61 72e3ee87     reached=no  recall=0.00 tokens= 7575 ok correct=True
+KU  37/61 5831f84d     reached=no  recall=0.00 tokens= 7686 ok correct=False
+KU  38/61 d7c942c3     reached=no  recall=0.00 tokens= 7974 ok correct=True
+KU  39/61 71315a70     reached=no  recall=0.00 tokens= 7722 ok correct=False
+KU  40/61 0977f2af     reached=no  recall=0.00 tokens= 7747 ok correct=False
+KU  41/61 852ce960     reached=yes recall=0.50 tokens= 7568 ok correct=True
+KU  42/61 2698e78f     reached=no  recall=0.00 tokens= 7663 ok correct=True
+KU  43/61 89941a93     reached=no  recall=0.00 tokens= 7486 ok correct=False
+KU  44/61 830ce83f     reached=no  recall=0.00 tokens= 7957 ok correct=False
+KU  45/61 1cea1afa     reached=no  recall=0.00 tokens= 7529 ok correct=True
+KU  46/61 a1eacc2a     reached=no  recall=0.00 tokens= 7463 ok correct=False
+KU  47/61 cc5ded98     reached=no  recall=0.00 tokens= 7838 ok correct=False
+KU  48/61 945e3d21     reached=no  recall=0.00 tokens= 7993 ok correct=False
+KU  49/61 e66b632c     reached=yes recall=0.50 tokens= 7999 ok correct=False
+KU  50/61 0ddfec37     reached=no  recall=0.00 tokens= 7882 ok correct=False
+KU  51/61 2133c1b5     reached=yes recall=0.50 tokens= 7676 ok correct=True
+KU  52/61 e493bb7c     reached=no  recall=0.00 tokens= 7995 ok correct=False
+KU  53/61 26bdc477     reached=no  recall=0.00 tokens= 7918 ok correct=False
+KU  54/61 ba61f0b9     reached=no  recall=0.00 tokens= 7786 ok correct=True
+KU  55/61 f685340e     reached=yes recall=0.50 tokens= 7691 ok correct=False
+KU  56/61 22d2cb42     reached=no  recall=0.00 tokens= 7983 ok correct=False
+KU  57/61 db467c8c     reached=no  recall=0.00 tokens= 7814 ok correct=False
+KU  58/61 4d6b87c8     reached=no  recall=0.00 tokens= 7566 ok correct=True
+KU  59/61 4b24c848     reached=no  recall=0.00 tokens= 7496 ok correct=True
+KU  60/61 8fb83627     reached=yes recall=0.33 tokens= 7421 ok correct=True
+KU  61/61 50635ada     reached=no  recall=0.00 tokens= 7724 ok correct=True
+
+single-session-user: 61 questions (a pilot at this size: one question moves a share by 0.02)
+  errors (left out of accuracy)                        0
+  accuracy                                             14 of 61 (0.23)
+  verdict neither yes nor no                           0
+  answer not a string                                  0
+  recall, mean                                         0.098
+  precision, mean                                      0.0034
+  evidence reached                                     6 of 61
+  evidence consolidated, mean (ADR 0013)               1.000
+  evidence consolidated or reached                     61 of 61
+  summary tokens, mean / max                           827 / 1,000
+  consolidations asked again / cut / skipped / all (0015, 0016) 1376 / 1073 / 4 / 2963
+  messages recalled, mean / max                        36 / 68
+  tokens_used, mean / max                              7,791 / 7,994
+  over budget                                          0
+  long-term, sample / whole list                       55 of 61 / 55 of 61
+  distance to evidence, median, sample / whole list    47,080 / 47,080
+  history tokens, mean                                 101,499
+  answer call per question, mean                       7,872 in, 13 out
+  consolidation per question, mean (ADR 0010)          176,676 in, 64,040 out, 71.7 calls
+  strategy cost per question, mean                     $0.0847, each call at its model's price
+
+knowledge-update: 61 questions (a pilot at this size: one question moves a share by 0.02)
+  errors (left out of accuracy)                        0
+  accuracy                                             20 of 61 (0.33)
+  verdict neither yes nor no                           0
+  answer not a string                                  0
+  recall, mean                                         0.079
+  precision, mean                                      0.0050
+  evidence reached                                     10 of 61
+  recall, list order, mean                             0.250 (over 10)
+  evidence reached, list order                         5 of 10
+  evidence consolidated, mean (ADR 0013)               1.000
+  evidence consolidated or reached                     61 of 61
+  summary tokens, mean / max                           869 / 999
+  consolidations asked again / cut / skipped / all (0015, 0016) 1383 / 1088 / 13 / 2911
+  messages recalled, mean / max                        36 / 87
+  tokens_used, mean / max                              7,776 / 7,999
+  over budget                                          0
+  long-term, sample / whole list                       50 of 61 / 55 of 69
+  distance to evidence, median, sample / whole list    21,467 / 21,367
+  history tokens, mean                                 101,635
+  answer call per question, mean                       7,860 in, 15 out
+  consolidation per question, mean (ADR 0010)          176,381 in, 63,941 out, 71.0 calls
+  strategy cost per question, mean                     $0.0846, each call at its model's price
+  breakdown, two evidence sessions (ADR 0009)          questions  correct
+    neither                                            49  12
+    earlier                                            0  0
+    later                                              10  8
+    both                                               0  0
+    not two evidence sessions (reported apart)         2
+  breakdown, consolidated or reached (ADR 0013)        questions  correct
+    neither                                            0  0
+    earlier                                            0  0
+    later                                              0  0
+    both                                               59  20
+    not two evidence sessions (reported apart)         2
+
+all calls: 9652, 91 failed; 24,551,507 tokens in, 8,449,477 out; $11.0717, each call at its model's price
+  answer                    959,660 in      1,686 out  $2.4160
+  consolidate            21,791,157 in  7,806,833 out  $7.9528
+  consolidate-list-order    1,783,575 in    640,104 out  $0.6516
+  grade                      17,115 in        854 out  $0.0513
+
+rows: data/longmemeval/runs/consolidating-20261003-233313.jsonl
