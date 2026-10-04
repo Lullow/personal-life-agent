@@ -6,6 +6,14 @@ directory: `RecentTurnsMemory` without a turn window, commit 972333c,
 `openai/gpt-4o-2024-08-06`, the first ten questions of each type. The reading
 files were written by `evals/write_run_reading.py`.
 
+*Amended 2026-10-04, provenance.* The author's notes are kept as
+`lasning-m1-anteckningar.md` in this directory, recovered from the chat on
+2026-10-04. The reading was made in dialogue: the author read every answer
+and gave a judgement, an AI assistant in chat gave its own, and the
+distribution below (17, 2, 1) and the five data notes are what the two agreed
+on. This review was written from that hand-over text and checked against the
+rows.
+
 ## Summary
 
 - **17 evidence missing.** No evidence turn was in the context, and the model

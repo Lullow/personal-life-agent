@@ -9,6 +9,20 @@ below. The author read them and discussed the classification with an AI
 assistant in chat; the classification was then checked against the rows and
 the dataset, which is where the ids and quotations below come from.
 
+*Amended 2026-10-04, provenance.* The author's notes are kept as
+`lasning-m2-anteckningar.md` in this directory, recovered from the chat the
+day after. The reading was one reading made in dialogue, not two independent
+ones: the author read every answer and gave a judgement, the assistant gave
+its own, and the letters are what the two agreed on; in the groups of 13 and
+9 the author set the letters first, in the smaller groups the assistant's
+reading was the larger part and the author checked it. Checked against the
+notes on 2026-10-04: the 13 `knowledge-update` errors are 6 A, 5 B and 2 C in
+both, `c4ea545c` is B and `f685340e` is C in both, and the 9
+`single-session-user` errors are 8 B in both. The one difference is
+`51a45a95`: the notes have C with a data flag, this review has E alone,
+because the check against the rows showed that the turn naming Target was
+not in the context, so the model could not have answered from it.
+
 ## Figures
 
 | | single-session-user | knowledge-update |

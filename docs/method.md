@@ -208,7 +208,11 @@ committed record is reopened only by a finding that the measurement itself is
 wrong, such as a record crossing the time cutoff or evidence that cannot be
 reached, and then everything measured under it is measured again; every other
 finding becomes a limitation. The answers of every run are read by hand
-before its figures are reported.
+before its figures are reported. That reading is one reading made in
+dialogue, not two independent ones: the author read every answer and gave a
+judgement, an AI assistant in chat gave its own, and the categories are what
+the two agreed on; the author's notes and the review written from them,
+checked against the rows and the dataset, are both kept in `evals/results/`.
 
 ## Limitations of the method, so far
 
