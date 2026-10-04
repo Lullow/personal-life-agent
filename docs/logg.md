@@ -80,6 +80,43 @@ fortfarande huvudresultatet. Redovisningen går först, och onsdag kväll
 Öppet: Gabriels svar, varför latens inte mättes, och hur kronkostnaden
 ska redovisas.
 
+---
+
+Senare på kvällen började jag ändå med första steget i M4: att säkra
+redovisningen, så att den fungerar även om inget mer blir gjort.
+
+Det gamla läsningsskriptet räckte inte. Det ger en fil per körning på
+över 500 rader, och tre minnen går inte att jämföra på en delad skärm.
+Därför gjorde jag ett nytt skript som visar en fråga genom alla
+strategier sida vid sida. Det läser bara sparade rader och anropar ingen
+modell, så det behöver ingen ADR.
+
+Valde tre frågor att visa, en per hypotes. Nike-frågan: baslinjen svarar
+"I do not know", de två andra rätt. Frågan där tre toppar blev fem:
+sökningen hade båda värdena framför sig och svarade det gamla. Frågan
+där Ford Mustang blev Ford F-150: sammanfattaren läste rätt session, men
+värdet finns inte kvar i anteckningarna.
+
+Bra att tänka på: tre frågor är exempel, inte bevis. När jag visar dem
+säger jag också proportionerna, 20 mot 47 av 61.
+
+Körde agentdemon mot en egen databas och lade till en glömskescen: jag
+säger att mina favoritlöparskor är Nike, startar om, och agenten vet
+ingenting. Det är samma fråga som sedan går genom de tre minnena.
+Utskrifterna i docs/demo.md är omskrivna från riktiga körningar,
+eftersom agenten betedde sig lite annorlunda än dokumentet sa.
+
+Hittade ett fel på vägen: bekräftelsefrågorna i chatten visade inte
+[y/N], eftersom Rich läste hakparentesen som formatering. Rättat, 357
+tester gröna.
+
+Gabriel svarade att planen låter rimlig men beror på detaljerna, så den
+ändras inte. Frågan om en skriven rapport fick jag inget svar på, så jag
+har frågat igen.
+
+Kvar: tiderna i körordningen (utkastet landar på 27–37 minuter mot 30),
+och sedan testet med tripplar in i Neo4j.
+
 ## 2026-10-03
 
 Läste själv igenom de 27 svar som avgör hypoteserna och skummade alla
