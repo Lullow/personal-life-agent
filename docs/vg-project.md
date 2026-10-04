@@ -116,6 +116,17 @@ hard stop is decided on Monday 5 October.
 - Hard stop. If it is not measured by the end of Tuesday 6 October, the report
   covers M2 and states that M3 was not done.
 
+Closed at the checkpoint on Sunday 4 October, two days before the hard stop.
+`ConsolidatingMemory` is built under ADRs 0015–0017 (0012 superseded after the
+first smoke test) with 0013 and 0014; it ran on all 122 questions the night of
+3–4 October, the answers were read by hand on 4 October, and the full table of
+three strategies × two types with its analysis is in `docs/results.md`, every
+figure checked by `evals/results_table.py`. The method section covers the
+third strategy. Three rules were reopened before the strategy was measured,
+each on a smoke test and each as a new record; nothing measured had to be
+measured again. The gpt-4o check that 0010 set aside was not made. The
+measurement has cost $26.90 so far, about 266 SEK at 0010's rate.
+
 **Step 7 — the report. Wednesday 7 to Friday 9 October.** No new code. The
 report is finished here, not started: each milestone has already added its
 part.
