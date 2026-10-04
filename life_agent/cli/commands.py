@@ -374,7 +374,8 @@ def register_commands(app: typer.Typer) -> None:
                 console.print()
                 console.print(format_confirmation_proposal(turn.proposal))
                 console.print()
-                if is_affirmative(console.input("Save this? [y/N] ")):
+                # Rich reads a bare [y/N] as a style tag and prints nothing for it.
+                if is_affirmative(console.input("Save this? \\[y/N] ")):
                     outcome = format_save_result(
                         save_confirmed_extraction(turn.extraction, confirmed=True)
                     )
@@ -393,10 +394,10 @@ def register_commands(app: typer.Typer) -> None:
                 console.print(f"Matched: {match.describe()}")
                 console.print()
                 if flow == "delete":
-                    question = "Delete this? [y/N] "
+                    question = "Delete this? \\[y/N] "
                 else:
                     question = (
-                        f"Move it to {new_time.strftime('%Y-%m-%d %H:%M')}? [y/N] "
+                        f"Move it to {new_time.strftime('%Y-%m-%d %H:%M')}? \\[y/N] "
                     )
 
                 if is_affirmative(console.input(question)):
@@ -428,7 +429,7 @@ def register_commands(app: typer.Typer) -> None:
                 console.print(format_completion_candidate(candidate))
                 console.print()
                 if is_affirmative(
-                    console.input("Mark this activity as completed? [y/N] ")
+                    console.input("Mark this activity as completed? \\[y/N] ")
                 ):
                     updated = complete_activity(candidate.id, confirmed=True)
                     outcome = (
