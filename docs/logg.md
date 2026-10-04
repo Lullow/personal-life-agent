@@ -46,6 +46,40 @@ fortfarande ett alternativ. Beslutet tar jag måndag 5 oktober, när jag
 har vägt nyttan av en andra benchmark eller modell mot tiden som är kvar
 till analys och rapport.
 
+---
+
+Kvällen gick åt till planering. Ingen kod skrevs.
+
+Räknade om kostnaden till kronor. Jag har betalat 800,25 kr för 60
+dollar i krediter, ungefär 13,34 kr per dollar. ADR 0010 räknade med
+9,90 kr, så det blev runt 35 % dyrare (moms, bankens kurs och avgift).
+Mätningen har hittills kostat ungefär 359 kr av taket på 1 000 kr.
+
+Jämförde sedan projektet med pitchen till Gabriel från 10 september. Det
+mesta håller, men tre saker saknas: strategin med tidsstämplade fakta
+som skrivs över, latens, och grafdatabasen som Gabriel föreslog. En sak
+jag mindes fel: vektorsökningen ströks inte för att den var dyr, utan
+för att den krävde fler mätregler och M2 redan låg på sitt slutdatum
+(ADR 0011).
+
+Examinationen är en redovisning på 30 minuter med skärmdelning, fredag
+9 oktober. Jag var orolig för att mitt innehåll mest ligger i text, men
+det mesta går att visa direkt ur repot. Jag har skrivit till Gabriel för
+att kolla att jag har förstått hans förslag rätt.
+
+Beslutet om M4 kom redan i kväll: en fjärde strategi, en faktagraf i
+Neo4j, där ett nytt värde ersätter det gamla utan att det raderas.
+
+**Anledning**: den täcker både strategin jag lovade i pitchen och
+Gabriels förslag.
+
+Grafen mäts som en pilot på 20 frågor, och jämförelsen på 122 frågor är
+fortfarande huvudresultatet. Redovisningen går först, och onsdag kväll
+är hårt stopp.
+
+Öppet: Gabriels svar, varför latens inte mättes, och hur kronkostnaden
+ska redovisas.
+
 ## 2026-10-03
 
 Läste själv igenom de 27 svar som avgör hypoteserna och skummade alla
