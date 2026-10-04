@@ -1,7 +1,6 @@
 # Results (draft)
 
-Status: M3, three strategies. The third row's answers have not been read by
-hand yet; the section on it says what the figures alone say.
+Status: M3, three strategies, all answers read by hand.
 
 Every figure here is printed by `evals/results_table.py` from the rows in
 `evals/results/`, and `--check` finds each one in this file. The first two
@@ -112,31 +111,57 @@ per call. The harness counts $5.01 for the two runs. What separates strategies
 on cost is the calls a strategy adds beyond the answer, which neither of these
 makes.
 
-## What the third row says, before its answers are read
+## What the third row says
+
+The answers were read by hand before this section was written
+(`evals/results/m3-runs-20261004-review.md`); the figures that come from the
+reading say so.
 
 **The third hypothesis does not hold as stated.** `ConsolidatingMemory`
 answers 20 of 61 changed-fact questions against `RetrievalMemory`'s 47, and
-14 of 61 single-fact questions against 50. It beats the baseline on both,
-9 and 3, and that is what the summary buys: the consolidator read every
-evidence turn in every question, 61 of 61 in both types, while the window
-alone reached 6 and 10. The loss is in the notes, not in the reading. On
-`knowledge-update` the model answered right in 20 of the 59 questions whose
-both evidence sessions it had read or seen, and in 8 of the 10 where the later
-session was also in the window. The hand reading has to say which of the
-other 39 are the old value kept, the new value compressed away, or a cut.
+14 of 61 single-fact questions against 50. It beats the baseline on both, 9
+and 3. The mechanism the hypothesis names is real: by the reading, in every
+one of its 20 correct `knowledge-update` answers the notes held the newer
+value only, and in none both, so the summary does replace the old value.
+What the hypothesis did not say is how little survives the replacing. The
+consolidator read every evidence turn in every question, 61 of 61 in both
+types, while the window alone reached 6 and 10; yet by the reading the
+requested value was in the notes in only 28 of 122 questions, and in 82 of
+the 88 errors it was not there at all. The "old value kept" box is empty,
+because the old value was gone too. Where the question asks for the earlier
+value, replacing is the error: three answers gave the newer one. "I do not
+know" is the answer in 84 of 88 errors.
+
+**The loss is bounded by distance.** Correct answers by the tokens of
+conversation between the newest evidence and the question: 12 of 17 under
+8,000, 13 of 26 from 8,000 to 20,000, 9 of 29 from 20,000 to 40,000, 0 of 28
+from 40,000 to 70,000 and 0 of 22 beyond. Nothing stated more than about
+twenty sessions before the question survived into the notes. The notes alone
+account for 21 of the 34 correct answers, the window for 7, both for 5, and
+one is a guess.
 
 **It loses detail and pays for extra calls, as the hypothesis said.** The
-notes held 827 and 869 tokens on average, below the 1,000 they were held to,
-and "I do not know" is the answer in 84 of its 122 answers. The size was held
-by the model in about half the sessions, by a second call in a few more, and
-by the cut in 2,161 of 5,874 (0015, 0017); 17 sessions were skipped after
-three looping replies (0016). The cost per question is $0.085 against $0.020,
-four times the other rows: 71 consolidation calls per question, 176,000
-tokens in and 64,000 out at the consolidator's price, against one answer call.
-The harness counts $11.07 for the run; OpenRouter billed $12.03, the
-difference the framing and the looping replies that were paid for and thrown
-away. 0010's estimate of $7.06 assumed one call per session; the second call
-and the loops are the rest.
+cost per question is $0.085 against $0.020, four times the other rows: 71
+consolidation calls per question, 176,000 tokens in and 64,000 out at the
+consolidator's price, against one answer call. The harness counts $11.07 for
+the run; OpenRouter billed $12.03, the difference the framing and the looping
+replies that were paid for and thrown away. 0010's estimate of $7.06 assumed
+one call per session; the second call and the loops are the rest.
+
+**The size was held by code more than by the model.** The notes held 827 and
+869 tokens on average, below the 1,000 they were held to, but the model kept
+to 750 words in about half the sessions, a second call shortened a few more,
+and the cut fell in 2,161 of 5,874 (0015, 0017); 17 sessions were skipped
+after three looping replies (0016), none of them holding evidence. The second
+call sometimes returned a fraction of the notes: in 78 consolidations in 67
+questions a reply over 1,000 tokens was followed by one under 30% of its
+size, and 19 questions ended with notes under 600 tokens, where 3 of 19
+answers were right against 31 of 103 above. Two final notes end mid-sentence
+where the model closed the JSON string at a quotation mark; the end of the
+notes is then lost without being counted, and the harness cannot see how
+often that happened in the intermediate notes. One set of notes collapsed to
+62 tokens because the cut rule knows no Chinese full stop. Four of the 122
+final notes are not in English.
 
 ## The secondary figures
 
@@ -171,12 +196,22 @@ and the loops are the rest.
   held by a second call and then by a cut that drops the oldest notes
   (0015, 0017). A cut summary is one the model did not make, and the cut fell
   in 2,161 of 5,874 consolidations.
+- The second call sometimes returns a fraction of the notes: 78 collapses in
+  67 questions; 5 questions ended with notes under 300 tokens, the smallest
+  62.
 - At temperature 0 the consolidator loops on some inputs, a phrase or
   whitespace repeated until the output runs out; 91 calls, 17 sessions skipped
   (0016). The loops are not deterministic: the same session passed in one run
   and failed in the next.
-- The second call sometimes returns notes far shorter than asked: 5 questions
-  ended with a summary under 300 tokens, the smallest 62.
+- The model sometimes closes the JSON string at a quotation mark; the end of
+  the notes is lost without being counted. Two final notes show it; the rate
+  in the intermediate notes is unknown, since successful replies were not
+  kept raw.
+- The cut rule's sentence ends are Latin punctuation; one Chinese set of
+  notes collapsed to 62 tokens for it. Four final notes follow a filler
+  session's language instead of English.
 - The consolidation model is weaker than the answering model (0010); the
   gpt-4o check 0010 set aside was not made.
+- The hand reading was one reading made in dialogue with an AI assistant, as
+  for M1 and M2, and the notes are kept next to the review.
 - The run's commit stamp carries `+dirty` from untracked result files.

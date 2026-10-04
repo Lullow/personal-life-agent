@@ -253,18 +253,44 @@ def claims_consolidating(f: dict) -> list[Claim]:
                f"{k['consolidate_calls'] / k['n']:.1f}", round(k["consolidate_in_per_q"]), round(k["consolidate_out_per_q"]))),
         Claim("results", "answer + consolidation cost", r"cost per question: answer \+ consolidation \| \$([\d.]+) \+ \$([\d.]+) \| \$([\d.]+) \+ \$([\d.]+) \|",
               (money(s["answer_cost_per_q"]), money(s["consolidate_cost_per_q"]), money(k["answer_cost_per_q"]), money(k["consolidate_cost_per_q"]))),
-        Claim("results", "third row: I do not know", r"\"I do not know\" is the answer in (\d+) of its 122 answers", (s["idk"] + k["idk"],)),
-        Claim("results", "third row: cut of all consolidations", r"by the cut in ([\d,]+) of ([\d,]+)",
+        Claim("results", "third row: I do not know in the errors", r"\"I do not\s+know\" is the answer in (\d+) of (\d+) errors",
+              (s["idk"] + k["idk"], s["n"] - s["correct"] + k["n"] - k["correct"])),
+        Claim("results", "third row: cut of all consolidations", r"the cut fell in ([\d,]+) of ([\d,]+)",
               (s["cut"] + k["cut"], s["consolidations"] + k["consolidations"])),
-        Claim("results", "third row: skipped sessions", r"(\d+) sessions were skipped after", (s["skipped"] + k["skipped"],)),
+        Claim("results", "third row: skipped sessions", r"(\d+) sessions were skipped\s+after", (s["skipped"] + k["skipped"],)),
         Claim("results", "third row: list-order reach", r"window reached\s+the evidence in (\d+) of (\d+), against (\d+) of 61 in clock order",
               (k["reached_list_order"], k["listed"], k["reached"])),
-        Claim("results", "third row: run cost counted", r"The\s+harness counts \$([\d.]+) for the run", (f"{run['cost']:.2f}",)),
+        Claim("results", "third row: run cost counted", r"The harness counts \$([\d.]+) for\s+the run", (f"{run['cost']:.2f}",)),
         Claim("results", "third row: failed calls", r"(\d+) consolidation calls failed, every one", (run["failed"],)),
-        Claim("results", "third row: both read, correct", r"right in (\d+) of the (\d+) questions whose\s+both evidence sessions",
-              (k["breakdown_consolidated"]["both"][1], k["breakdown_consolidated"]["both"][0])),
-        Claim("results", "third row: later in window, correct", r"in (\d+) of the (\d+) where the later\s+session was also in the window",
-              (k["breakdown"]["later"][1], k["breakdown"]["later"][0])),
+    ] + claims_reading()
+
+
+def claims_reading() -> list[Claim]:
+    """Figures the review derives from the rows and the reading notes (evals/m3_review_figures.py)."""
+    from evals.m3_review_figures import compute as review  # noqa: PLC0415 — only when the third row exists
+    g = review()
+    dist = g["correct by distance"]
+    under, over = g["correct under 600 / at least 600"]
+    cb = g["correct boxes"]
+    notes_only = cb[("SSU", "anteckningarna")] + cb[("KU", "anteckningarna")]
+    window_only = cb[("SSU", "fönstret")] + cb[("KU", "fönstret")]
+    both = cb[("SSU", "båda")] + cb[("KU", "båda")]
+    return [
+        Claim("results", "reading: correct by distance",
+              r"(\d+) of (\d+) under\s+8,000, (\d+) of (\d+) from 8,000 to 20,000, (\d+) of (\d+) from 20,000 to 40,000, (\d+) of (\d+)\s+from 40,000 to 70,000 and (\d+) of (\d+) beyond",
+              tuple(v for _, _, c, n in dist for v in (c, n))),
+        Claim("results", "reading: answered from notes / window / both / guess",
+              r"The notes alone\s+account for (\d+) of the (\d+) correct answers, the window for (\d+), both for (\d+), and\s+one is a guess",
+              (notes_only, g["correct"], window_only, both)),
+        Claim("results", "reading: one guess", r"and\s+one is a guess", cb[("KU", "gissning")] + cb[("SSU", "gissning")] == 1),
+        Claim("results", "rows: ask-again collapses", r"in (\d+) consolidations in (\d+)\s+questions a reply over 1,000 tokens was followed by one under 30%",
+              g["collapses"]),
+        Claim("results", "rows: short final notes and correctness", r"(\d+) questions ended with notes under 600 tokens, where (\d+) of (\d+)\s+answers were right against (\d+) of (\d+) above",
+              (under[1], under[0], under[1], over[0], over[1])),
+        Claim("results", "rows: final notes ending mid-sentence", r"(\w+) final notes end mid-sentence", (len(g["mid-sentence endings"]),)),
+        Claim("results", "rows: non-English final notes", r"(\w+) of the 122\s+final notes are not in English", (len(g["non-English finals"]),)),
+        Claim("results", "rows: the Chinese notes", r"collapsed to\s+(\d+) tokens because the cut rule knows no Chinese full stop", (g["36580ce8"]["tokens"],)),
+        Claim("results", "rows: skipped sessions held no evidence", r"none of them holding evidence", g["evidence consolidated everywhere"]),
     ]
 
 
