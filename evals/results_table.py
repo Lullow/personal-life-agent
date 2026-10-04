@@ -32,7 +32,7 @@ RUNS = {
     "recent-turns": "recent-turns-20261002-193902.jsonl",
     "retrieval": "retrieval-20261002-193417.jsonl",
     # M3: set to the run's file once it is committed. A missing file leaves the row out.
-    "consolidating": "consolidating-M3.jsonl",
+    "consolidating": "consolidating-20261003-233313.jsonl",
 }
 RUNS = {name: file for name, file in RUNS.items() if (RESULTS / file).exists()}
 NAMES = {"recent-turns": "RecentTurnsMemory", "retrieval": "RetrievalMemory", "consolidating": "ConsolidatingMemory"}
@@ -122,6 +122,7 @@ def compute() -> dict:
         for t in TYPES:
             f["cells"][(name, t)] = cell([r for r in rs if r["question_type"] == t])
     f["total_cost"] = sum(v["cost"] for v in f["runs"].values())
+    f["two_runs_cost"] = sum(f["runs"][n]["cost"] for n in ("recent-turns", "retrieval") if n in f["runs"])
     return f
 
 
@@ -214,8 +215,56 @@ def claims(f: dict) -> list[Claim]:
               (r[0]["reached_user_turns"], r[1]["reached_user_turns"])),
         Claim("results", "list-order reach", r"in the list order of 0004 it reaches the evidence in (\d+) `knowledge-update` questions instead of (\d+)",
               (b[1]["reached_list_order"], b[1]["reached"])),
-        Claim("results", "both runs cost", r"The harness counts \$([\d.]+) for the two runs", (f"{f['total_cost']:.2f}",)),
+        Claim("results", "both runs cost", r"The harness counts \$([\d.]+) for the two runs", (f"{f['two_runs_cost']:.2f}",)),
         Claim("results", "commit", r"commit `([0-9a-f]{7})`", (next(iter(f["runs"]["retrieval"]["commit"])),)),
+    ] + (claims_consolidating(f) if ("consolidating", SSU) in c else [])
+
+
+def claims_consolidating(f: dict) -> list[Claim]:
+    c = f["cells"]
+    s, k = c[("consolidating", SSU)], c[("consolidating", KU)]
+    run = f["runs"]["consolidating"]
+    money = lambda v: f"{v:.4f}"  # noqa: E731
+    return [
+        Claim("results", "ConsolidatingMemory correct", r"`ConsolidatingMemory`, correct \| (\d+) of (\d+) \(([\d.]+)\) \| (\d+) of (\d+) \(([\d.]+)\)",
+              (s["correct"], s["n"], f"{s['correct'] / s['n']:.2f}", k["correct"], k["n"], f"{k['correct'] / k['n']:.2f}")),
+        Claim("results", "ConsolidatingMemory reached", r"`ConsolidatingMemory`, evidence reached \| (\d+) of \d+ \| (\d+) of \d+",
+              (s["reached"], k["reached"])),
+        Claim("results", "ConsolidatingMemory recall / precision", r"`ConsolidatingMemory`, recall / precision \| ([\d.]+) / ([\d.]+) \| ([\d.]+) / ([\d.]+)",
+              (f"{s['recall']:.3f}", f"{s['precision']:.4f}", f"{k['recall']:.3f}", f"{k['precision']:.4f}")),
+        Claim("results", "ConsolidatingMemory messages / tokens", r"`ConsolidatingMemory`, messages / tokens recalled \| (\d+) / ([\d,]+) \| (\d+) / ([\d,]+)",
+              (round(s["messages"]), round(s["tokens_used"]), round(k["messages"]), round(k["tokens_used"]))),
+        Claim("results", "ConsolidatingMemory cost", r"`ConsolidatingMemory`, cost per question, counted / with framing \| \$([\d.]+) / \$([\d.]+) \| \$([\d.]+) / \$([\d.]+)",
+              (money(s["cost_per_q"]), money(s["framed_per_q"]), money(k["cost_per_q"]), money(k["framed_per_q"]))),
+        Claim("results", "KU breakdown, ConsolidatingMemory", r"`ConsolidatingMemory` \| (\d+), (\d+) \| (\d+), (\d+) \| (\d+), (\d+) \| (\d+), (\d+) \| (\d+) \|",
+              (*(v for g in GROUPS for v in k["breakdown"][g]), k["apart"])),
+        Claim("results", "KU breakdown, consolidated or reached", r"`ConsolidatingMemory` \| (\d+), (\d+) \| (\d+), (\d+) \| (\d+), (\d+) \| (\d+), (\d+) \| (\d+) \|.*?`ConsolidatingMemory` \| (\d+), (\d+) \| (\d+), (\d+) \| (\d+), (\d+) \| (\d+), (\d+) \| (\d+) \|",
+              (*(v for g in GROUPS for v in k["breakdown"][g]), k["apart"], *(v for g in GROUPS for v in k["breakdown_consolidated"][g]), k["apart"])),
+        Claim("results", "evidence consolidated", r"evidence consolidated, mean \| ([\d.]+) \| ([\d.]+) \|",
+              (f"{s['consolidated']:.3f}", f"{k['consolidated']:.3f}")),
+        Claim("results", "consolidated or reached", r"evidence consolidated or reached \| (\d+) of \d+ \| (\d+) of \d+ \|",
+              (s["consolidated_or_reached"], k["consolidated_or_reached"])),
+        Claim("results", "summary tokens", r"summary tokens, mean \| ([\d,]+) \| ([\d,]+) \|",
+              (round(s["summary_tokens"]), round(k["summary_tokens"]))),
+        Claim("results", "asked again / cut / skipped / all", r"consolidations: asked again / cut / skipped / all \| (\d+) / (\d+) / (\d+) / (\d+) \| (\d+) / (\d+) / (\d+) / (\d+) \|",
+              (s["reasked"], s["cut"], s["skipped"], s["consolidations"], k["reasked"], k["cut"], k["skipped"], k["consolidations"])),
+        Claim("results", "consolidation calls and tokens per question", r"consolidation per question: calls, tokens in / out \| ([\d.]+), ([\d,]+) / ([\d,]+) \| ([\d.]+), ([\d,]+) / ([\d,]+) \|",
+              (f"{s['consolidate_calls'] / s['n']:.1f}", round(s["consolidate_in_per_q"]), round(s["consolidate_out_per_q"]),
+               f"{k['consolidate_calls'] / k['n']:.1f}", round(k["consolidate_in_per_q"]), round(k["consolidate_out_per_q"]))),
+        Claim("results", "answer + consolidation cost", r"cost per question: answer \+ consolidation \| \$([\d.]+) \+ \$([\d.]+) \| \$([\d.]+) \+ \$([\d.]+) \|",
+              (money(s["answer_cost_per_q"]), money(s["consolidate_cost_per_q"]), money(k["answer_cost_per_q"]), money(k["consolidate_cost_per_q"]))),
+        Claim("results", "third row: I do not know", r"\"I do not know\" is the answer in (\d+) of its 122 answers", (s["idk"] + k["idk"],)),
+        Claim("results", "third row: cut of all consolidations", r"by the cut in ([\d,]+) of ([\d,]+)",
+              (s["cut"] + k["cut"], s["consolidations"] + k["consolidations"])),
+        Claim("results", "third row: skipped sessions", r"(\d+) sessions were skipped after", (s["skipped"] + k["skipped"],)),
+        Claim("results", "third row: list-order reach", r"window reached\s+the evidence in (\d+) of (\d+), against (\d+) of 61 in clock order",
+              (k["reached_list_order"], k["listed"], k["reached"])),
+        Claim("results", "third row: run cost counted", r"The\s+harness counts \$([\d.]+) for the run", (f"{run['cost']:.2f}",)),
+        Claim("results", "third row: failed calls", r"(\d+) consolidation calls failed, every one", (run["failed"],)),
+        Claim("results", "third row: both read, correct", r"right in (\d+) of the (\d+) questions whose\s+both evidence sessions",
+              (k["breakdown_consolidated"]["both"][1], k["breakdown_consolidated"]["both"][0])),
+        Claim("results", "third row: later in window, correct", r"in (\d+) of the (\d+) where the later\s+session was also in the window",
+              (k["breakdown"]["later"][1], k["breakdown"]["later"][0])),
     ]
 
 
