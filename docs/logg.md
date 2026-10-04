@@ -2,103 +2,113 @@
 
 Senaste överst. Vad jag gjorde, vad jag fick, vad som förvånade mig.
 
+## 2026-10-04
+
+Körningen av den tredje strategin (sammanfattning) blev klar under
+natten. Läste igenom alla 122 svar själv och sorterade dem efter varför
+de blev rätt eller fel, och jämförde sedan med agentens sortering.
+
+Resultatet blev sämre än jag trodde. Sammanfattningen fick 14 av 61 rätt
+på de vanliga frågorna och 20 av 61 på frågorna där ett faktum har
+ändrats. Sökningen fick 50 och 47. Hypotes 3 höll alltså inte:
+sammanfattningen kostar ungefär fyra gånger så mycket per fråga, men den
+missar fler ändrade fakta, inte färre.
+
+Det jag förstår av läsningen är att modellen som sammanfattar läser rätt
+session, men sällan skriver ner just det faktum som frågan sedan gäller.
+När faktumet väl stod i anteckningarna blev svaret nästan alltid rätt
+(26 av 28). Annars svarade modellen oftast "I do not know".
+
+Jag trodde att sammanfattningen skulle vara bäst på ändrade fakta,
+eftersom den hela tiden skriver om sig själv. Men små detaljer försvann
+ofta när runt 50 sessioner skulle pressas in på cirka 1 000 tokens.
+
+Bra att tänka på: jag hade själv fel på ett par ställen när min
+sortering jämfördes med resultatraderna. Därför beskriver jag läsningen
+i rapporten som gjord i dialog med agenten, inte som två oberoende
+läsningar.
+
+Läste igenom ADR 0016 och 0017, som agenten skrev medan jag sov, och
+behåller dem. 0016 känns rimlig eftersom en trasig session annars slår
+ut hela frågan för alla tre strategierna. 0017 följer tanken med en
+rullande sammanfattning genom att behålla det nyaste. Däremot kan den
+missgynna äldre fakta, så det tas upp som en begränsning i rapporten.
+
+M3 är stängd, två dagar före planeringen. Kontrollen med gpt-4o är valfri
+(ADR 0010), och kräver ny kod i riggen - jag har valt att inte göra den.
+Tabellens och analysens siffror står i docs/results.md.
+
+Begränsningen från 27/9 står därför kvar: jag kan inte säga om det svaga
+resultatet beror på metoden eller på den mindre modellen.
+
+Kvar: rapporten, som ska in 9 oktober. M3 blev klar i tid, så M4 är
+fortfarande ett alternativ. Beslutet tar jag måndag 5 oktober, när jag
+har vägt nyttan av en andra benchmark eller modell mot tiden som är kvar
+till analys och rapport.
+
 ## 2026-10-03
 
-Jag läste själv de 27 fall som avgör hypoteserna, uppdelade i fyra
-läsfiler, och skummade alla 244 svar. Inget svar följde en instruktion
-från en utfyllnadssession, och jag hittade inga domarfel. Sedan jämförde
-jag min bedömning med agentens preliminära sortering. Vi skilde oss på
-tre frågor, och där höll min: 6071bd76 och f685340e är felslut, inte det
-gamla värdet, och c4ea545c är "hittade inte det nya".
+Läste själv igenom de 27 svar som avgör hypoteserna och skummade alla
+244. Jämförde min bedömning med agentens. På tre frågor tyckte vi olika,
+och där höll min.
 
-Det läsningen gav: av sökningens 13 KU-fel med båda värdena i kontexten
-svarade 6 med det gamla värdet, 5 hittade inte det nya och 2 var felslut.
-Av de 9 SSU-fel där evidensen var framme svarade 8 "I do not know" trots
-att svaret stod ordagrant i kontexten. Det nionde är ett datafel
-(51a45a95, Target-turen var inte med). Baslinjens 2 rätta svar utan
-evidens var inga gissningar, de kom från omarkerade turer som upprepar
-faktumet. Två par av KU-frågor delar evidens (07741c44/45 och
-89941a93/94).
+Det läsningen visade: sökningen hittar nästan alltid rätt ställe i
+samtalet. Av dess 25 fel hade 23 svaret framför sig. Felen ligger alltså
+hos modellen som svarar, inte hos minnet. Ofta svarade den "I do not
+know" fast svaret stod där, och ibland valde den det gamla värdet fast
+det nya också fanns med.
 
-Hypoteserna: H1 håller. H2 håller i första halvan, sökningen hittar gamla
-fakta (50 mot 3 rätt på SSU). Andra halvan är inte tydlig: 47 rätt på KU
-mot 50 på SSU är tre frågor, och det är inom slumpen. Mekanismen finns
-ändå. I 6 av 61 frågor svarade modellen med det gamla värdet fast båda
-fanns framme. Med båda värdena i kontexten blev 45 av 58 rätt.
+Hypotes 1 håller. Hypotes 2 håller till hälften. Sökningen hittar gamla
+fakta mycket bättre än baslinjen (50 mot 3 rätt). Men att den skulle
+svara sämre när ett faktum har ändrats syns inte tydligt: 47 mot 50 är
+för liten skillnad för att säga något.
 
-Det viktigaste jag tar med mig: 23 av sökningens 25 fel hade evidensen i
-kontexten. Felen är modellens, inte minnets.
-
-Resultattabellen finns nu i docs/results.md, med tabell, KU-uppdelning,
-analys och begränsningar. evals/results_table.py räknar fram varje siffra
-ur raderna, och --check hittar alla 17 siffror i texten. Kostnaden
-skiljer inte raderna åt: sökningen ligger ungefär 24 tokens högre per
-anrop.
-
-Kvar i M2 är metodavsnittet, avstämningen av M2 och att läsa av fakturan
-hos OpenRouter. Måndag 5 oktober bestämmer jag om M3 ryms före stoppet
-tisdag 6 oktober.
-
-Commits: da8cddd (läsningen), be8cb10 (tabellen).
-
-## 2026-10-02
-
-Började med en avstämning. M1 skulle ha varit klar 29 september, och
-inget hade hänt sedan 27:e. Riggen, piloten och ADR 0004–0010 var klara,
-men metodutkastet var en enda mening. Jag stängde M1 tre dagar sent och
-flyttade metodavsnittet in i M2.
-
-Sedan ADR 0011: BM25 i stället för embeddings, som ADR 0010 hade antagit.
-Jag valde BM25 eftersom det inte gör några modellanrop. Torrkörningen kan
-räkna recall gratis, siffrorna går att upprepa utan nyckel, och jag
-slipper nya regler för tokenräkning, cache och långa meddelanden. Priset
-är att matchningen är lexikal, så raden heter BM25-sökning i rapporten
-och inte sökning i allmänhet.
-
-Tre regler låstes före mätningen: varje tur rangordnas för sig, även
-assistentens; budgeten fylls i rangordning och turer som inte ryms
-hoppas över; turerna visas i den ordning de sades. Den sista är den
-viktiga. Modellen ser inga datum, så ordningen är det enda som säger
-vilket värde som är nyast. Med bästa träff först hade H2 blivit sann per
-konstruktion.
-
-Innan commit gick jag igenom fallgroparna. Assistentens turer står för
-87 % av alla tokens men bara 2 av 185 evidensturer, så jag deklarerade en
-sidosiffra i förväg: recall med bara användarens turer. Riggens
-kostnadsräkning missar 4 tokens per meddelande, och sökningen skickar
-fler korta meddelanden än baslinjen, så kostnaden redovisas med påslag.
-Ingen evidenstur är större än budgeten. Siffrorna går att räkna om med
-evals/verify_adr_0011.py.
-
-Därefter byggde jag RetrievalMemory i memory.py, 315 tester gröna.
-Kontrakttesterna behövde frågor som delar ett ord med den post de väntar
-sig, eftersom en strategi som söker på relevans inte returnerar något
-för "q".
-
-Torrkörningen på alla 122 frågor: sökningen når evidensen i 59 av 61 SSU
-och 61 av 61 KU, baslinjen i 6 och 11. Farhågorna slog inte in. Recall
-med bara användarens turer blev nästan samma, och sökningen skickar
-43–45 meddelanden per anrop, inte 200.
+Skrev sedan metodavsnittet och stängde M2, en dag sent. Resultaten står
+i docs/results.md.
 
 ---
 
-Riktig körning, efter att saldot var påfyllt. Först ett röktest med en
-fråga per typ: leverantören räknade 8 240 tokens mot riggens 8 077,
-alltså exakt 4 per meddelande plus 3. Nike-frågan fick "I do not know" i
-röktestet och "Nike" när den kördes om på samma kontext. Modellen är
-alltså inte deterministisk ens vid temperatur 0.
+På kvällen började jag med M3, den tredje strategin: en sammanfattning
+som skrivs om efter varje session (ADR 0012–0014). Jag godkände
+upplägget och bad agenten gå igenom fallgroparna innan något byggdes.
 
-Båda strategierna kördes sedan på 122 frågor utan fel. Sökningen fick 50
-av 61 rätt på SSU och 47 av 61 på KU, baslinjen 3 och 9. Riggen räknar
-5,01 dollar; fakturan är inte avläst än.
+Första testet sprack. Modellen som sammanfattar brydde sig inte om
+ordgränsen, och sammanfattningen blev större än hela budgeten.
 
-Dessutom finns en karta över projektet som artefakt, som ska uppdateras
-efter varje milstolpe, och dokumenten ligger som kunskap i ett projekt i
-Claude Desktop. De laddades upp för hand eftersom GitHub-väljaren bara
-visar main.
+**Anledning** till lösningen: jag valde ett tak i koden. Modellen får en
+chans att korta texten, och är den fortfarande för lång klipps den
+(ADR 0015).
 
-Commits: cd04afa (M1 stängd), cb12f5c (ADR 0011), c242d35 (bygget),
-f46b438 (körningen).
+Sedan lät jag agenten arbeta vidare över natten. Två beslut togs medan
+jag sov (ADR 0016 och 0017): vad som händer när modellen fastnar i en
+loop, och från vilket håll texten klipps.
+
+## 2026-10-02
+
+Började med en avstämning. M1 skulle ha varit klar 29 september, men jag
+hade inte gjort något sedan 27:e. Stängde M1 tre dagar sent och flyttade
+metodavsnittet till M2.
+
+Bestämde hur sökningen ska fungera: BM25 i stället för embeddings
+(ADR 0011). Det jag förstår är att BM25 letar efter turer som delar ord
+med frågan.
+
+**Anledning**: BM25 behöver inga modellanrop. Det kostar inget att
+testa, och siffrorna går att räkna om utan nyckel. Nackdelen är att den
+bara matchar ord som stavas lika.
+
+Ett beslut som var viktigare än jag först trodde: turerna visas i den
+ordning de sades. Modellen ser inga datum, så ordningen är det enda som
+visar vilket värde som är nyast.
+
+Byggde RetrievalMemory och testade först utan modellanrop. Sökningen
+hittar rätt ställe i 59 och 61 av 61 frågor, baslinjen i 6 och 11.
+Körde sedan på riktigt, 122 frågor per strategi. Sökningen fick 50 och
+47 av 61 rätt, baslinjen 3 och 9.
+
+Bra att tänka på: samma fråga fick "I do not know" första gången och
+rätt svar andra gången, med exakt samma indata. Modellen svarar alltså
+inte alltid likadant, även vid temperatur 0.
 
 ## 2026-09-27
 
