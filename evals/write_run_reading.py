@@ -64,9 +64,16 @@ def question_section(n: int, r: dict, x: dict, full_context: bool) -> list[str]:
         f"- context: {len(r['sources'])} messages, {r['tokens_used']:,} tokens; "
         f"{r['distance_tokens']:,} tokens between the newest evidence and the question"
         + (" (long-term)" if r["long_term"] else ""),
-        "",
-        "### Evidence, in replay order", "",
     ]
+    if r.get("summary") is not None:
+        # ADRs 0013, 0015–0017: the consolidating strategy's row carries the notes the model saw.
+        lines += [
+            f"- consolidated: evidence read by the consolidator {r['evidence_consolidated']:.2f}"
+            + (f"; breakdown with the notes: {r['ku_breakdown_consolidated']}" if r.get("ku_breakdown_consolidated") else "")
+            + f"; {r['consolidations']} consolidations, {r['summary_reasked']} asked again, "
+            f"{r['summary_truncated']} cut, {r['consolidations_failed']} skipped; notes {r['summary_tokens']:,} tokens",
+        ]
+    lines += ["", "### Evidence, in replay order", ""]
     sessions = list(dict.fromkeys(records[i].session_id for i in evidence))
     which = dict(zip(sessions, ("earlier", "later"))) if x["question_type"] == KU and len(sessions) == 2 else {}
     for i in evidence:
@@ -76,7 +83,9 @@ def question_section(n: int, r: dict, x: dict, full_context: bool) -> list[str]:
         lines += [f"#### {i}, {rec.role}{label}: {where}", "",
                   f"Session date {date_of[rec.session_id]}.", ""] + text_block(rec.content)
 
-    seen = [records[i] for i in r["sources"]]
+    seen = [records[i] for i in r["sources"] if i in records]  # a summary's id is not a turn
+    if r.get("summary") is not None:
+        lines += ["### The notes the model saw first, as one assistant message (ADR 0015)", ""] + text_block(r["summary"])
 
     def message(rec: MemoryRecord) -> list[str]:
         mark = " (evidence)" if rec.id in r["evidence"] else ""
