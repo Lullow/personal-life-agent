@@ -487,7 +487,106 @@ def claims_pilot(f: dict) -> list[Claim]:
         cs.append(Claim("results", f"pilot: {q['id']}",
                         rf"`{q['id']}` \| {q['type']} \| " + each(r"(\w+)") + r" (\w+) \| (\d+) / (\d+) / (\d+) \|",
                         (*(q["verdicts"][n] for n in names), q["reached"], *q["evidence_turn_facts"])))
-    return cs
+    return cs + claims_pilot_text(f)
+
+
+def claims_pilot_text(f: dict) -> list[Claim]:
+    """The figures in the text under the pilot's tables: from the rows, the exported facts and the
+    reading notes (evals/m4_review_figures.py), without the dataset."""
+    from evals.m4_review_figures import compute as review  # noqa: PLC0415 — only when the pilot is reported
+    from life_agent.agent.memory import FACT_TOKENS  # noqa: PLC0415
+    p, g = f["pilot"], review()
+    c, run = p["cells"], p["run"]
+    (fourth,) = PILOT
+    s, k = c[(fourth, SSU)], c[(fourth, KU)]
+    r = (c[("retrieval", SSU)], c[("retrieval", KU)])
+    cb = g["correct boxes"]
+    replaced, replaced_right = g["earlier replaced by the newer: questions, correct"]
+    both, both_right = g["both held and shown: questions, correct"]
+    never, never_right = g["one value never a fact: questions, correct"]
+    in_fact, in_fact_right = g["value in a shown fact, by the rows: questions, correct"]
+    far, far_right, far_third = g["beyond 40,000 tokens: questions, correct here, correct for the consolidating run"]
+    stored, n_replaced = g["facts stored / replaced"]
+    from_evidence, from_evidence_replaced, _ = g["facts from evidence sessions: all / replaced / shown"]
+    by_evidence, by_others = g["of those replaced: by an evidence session / by a session without evidence"]
+    out, fewer = g["b01defab: turns the baseline had and this run did not, their tokens"]
+    raw_base, raw_third, raw_here = g["b01defab: raw tokens in the window, baseline / consolidating / here"]
+    reading = g["reading of the replacements"]
+    wrong_on_content = g["judged right and not an answer by the reading"]
+    listed = run["labels"]["extract-list-order"][1]
+    return [
+        Claim("results", "pilot text: questions, commit, day", r"on the first (\w+) questions of each type, the (\d+) of the M1 pilot, on commit `([0-9a-f]{7})` on (\d+) October",
+              (PILOT_PER_TYPE, len(p["questions"]), *sorted(run["commit"]), *sorted({int(file.split("-")[-2][6:8]) for file in PILOT.values()}))),
+        Claim("results", "pilot text: the days of the other runs", r"the rows their runs of (\d+) and (\d+) October have for the same questions",
+              tuple(sorted({int(file.split("-")[-2][6:8]) for file in RUNS.values()}))),
+        Claim("results", "pilot text: extractor", r"with `([\w/.-]+)` extracting the facts", tuple(sorted(run["extractor"]))),
+        Claim("results", "pilot text: calls", r"none of its ([\d,]+) calls failed and no session was skipped", (run["calls"],)),
+        Claim("results", "pilot text: no call failed, no session skipped, no error", r"No question errored and nothing was over budget; none of its",
+              run["failed"] == 0 and s["skipped"] + k["skipped"] == 0 and s["errors"] + k["errors"] == 0 and g["errors / over budget"] == (0, 0)),
+        Claim("results", "pilot text: one question moves a share", r"one question moves a share by ([\d.]+), a repeat", (1 / PILOT_PER_TYPE,)),
+        Claim("results", "pilot text: the baseline's repeat", r"a repeat of the same (\d+) questions changed (\w+) answer of the baseline",
+              (len(p["questions"]), len(g["the baseline's two runs differ on"]))),
+        Claim("results", "pilot text: retrieval on the same questions", r"`RetrievalMemory` answered (\d+) and (\d+) of the same questions; the difference from the pilot's (\d+) and (\d+) is (\w+) question",
+              (r[0]["correct"], r[1]["correct"], s["correct"], k["correct"], abs(s["correct"] - r[0]["correct"]) + abs(k["correct"] - r[1]["correct"]))),
+        Claim("results", "reading: value in a shown fact", r"stood in a fact that was shown in (\d+) of the (\d+) questions, and (\d+) of the (\d+) were answered right",
+              (in_fact, len(p["questions"]), in_fact_right, in_fact)),
+        Claim("results", "reading: correct from the facts alone", r"the facts alone gave (\d+) of the (\d+) correct answers, (\d+) and (\d+)",
+              (cb[("SSU", "korten")] + cb[("KU", "korten")], g["correct"], cb[("SSU", "korten")], cb[("KU", "korten")])),
+        Claim("results", "rows: beyond 40,000 tokens", r"(\w+) of the (\d+) questions have more than 40,000 tokens between the evidence and the question, .*? (\w+) of the (\w+) were judged right here and none of them in the third row's run",
+              (far, len(p["questions"]), far_right, far)),
+        Claim("results", "rows: beyond 40,000 tokens, the third row", r"and none of them in the third row's run", far_third == 0),
+        Claim("results", "facts: the changed value replaced", r"replaced the changed value in (\w+) of the (\w+) `knowledge-update` questions, and (\w+) of the (\w+) were answered right",
+              (len(replaced), k["n"], replaced_right, len(replaced))),
+        Claim("results", "facts: each by the question's newer value", r"In each of the (\w+) the earlier value's fact was replaced by the question's newer value",
+              (g["those replaced by the question's newer fact"],)),
+        Claim("results", "facts: no evidence-turn fact replaced by anything else", r"no fact that names an evidence turn was replaced by anything else",
+              g["those replaced by the question's newer fact"] == g["facts naming an evidence turn: all / replaced / shown"][1] == len(replaced)),
+        Claim("results", "facts: two names, and a value never a fact", r"In (\w+) questions the two values got different names, so both held and both were shown, and (\w+) was answered right; in (\w+) more one of the values never became a fact, and (\w+) was judged right",
+              (len(both), both_right, len(never), never_right)),
+        Claim("results", "facts: every changed value in one of the three", r"in two more one of the values never became a fact", g["every knowledge-update question in one group"]),
+        Claim("results", "spike: the changed value kept its name", r"kept its name in (\d+) of the (\d+) histories \(0018\)", kind="external",
+              note="ADR 0018's figure, by a hand reading; evals/verify_adr_0018.py finds it there"),
+        Claim("results", "reading: the judge's count and on content", r"The judge's (\d+) of (\d+) is (\d+) of (\d+) counted on content",
+              (k["correct"], k["n"], k["correct"] - len(wrong_on_content), k["n"])),
+        Claim("results", "reading: the verdict counted as wrong on content", r"counted on content.\*\* `(\w+)` asks", tuple(wrong_on_content)),
+        Claim("results", "reading: the errors and their boxes", r"The (\w+) errors sit in (\w+) places",
+              (s["n"] - s["correct"] + k["n"] - k["correct"], len(g["error boxes"]))),
+        Claim("results", "facts: every held evidence-turn fact shown", r"every fact that names an evidence turn and held was shown",
+              g["facts naming an evidence turn, held and not shown"] == 0),
+        Claim("results", "rows: b01defab, the baseline's window", r"began (\w+) turns earlier and held (\w+) turns of the later evidence session",
+              (len(out), len(g["b01defab: of them from an evidence session"]))),
+        Claim("results", "rows: b01defab, tokens", r"holds ([\d,]+) tokens of raw turns against the baseline's ([\d,]+), ([\d,]+) fewer, and the facts message holds ([\d,]+)",
+              (raw_here, raw_base, fewer, g["b01defab: facts message tokens"])),
+        Claim("results", "rows: b01defab, the third row's window and the verdicts", r"The third row's window on the question is the same as the pilot's, and both answered \"I do not know\"",
+              g["b01defab: the consolidating run's window is this run's"] and raw_third == raw_here
+              and g["b01defab: answers, baseline / consolidating / here"] == ("yes", "no", "no")),
+        Claim("results", "rows: 0f05491a, 300 in the assistant's turn, every run", r"300 stands in the assistant's turn just before the user's correction to 120, in the context of all (\w+) runs",
+              (len(g["0f05491a: runs with answer_d6d2eba8_2:5 in the context"]),)),
+        Claim("results", "rows: 0f05491a, the printout and the answers", r"The two baseline runs answered 300 as well",
+              g["0f05491a: answer_d6d2eba8_2:5 in the printout: role, says 300 stars"] == ("assistant", True)
+              and len(g["0f05491a: runs with answer_d6d2eba8_2:5 in the context"]) == len(g["0f05491a: answers with 300"])
+              and [n for n, v in g["0f05491a: answers with 300"].items() if v] == ["pilot baseline", "baseline", "here"]
+              and not g["0f05491a: facts with 300 as a number"]),
+        Claim("results", "rows: 0f05491a, the reference answer", r"just before the user's correction to (\d+), in the context", (g["_rows"]["0f05491a"]["gold_answer"],)),
+        Claim("results", "facts: replaced of stored", r"The rule replaced (\d+) of the ([\d,]+) facts in the (\d+) histories", (n_replaced, stored, len(p["questions"]))),
+        Claim("results", "facts: from evidence sessions, replaced", r"(\d+) of the (\d+) facts from evidence sessions were replaced, each by a fact of the question's other evidence session and none by a session without evidence",
+              (from_evidence_replaced, from_evidence)),
+        Claim("results", "facts: none replaced by a session without evidence", r"and none by a session without evidence", (by_evidence, by_others) == (from_evidence_replaced, 0)),
+        Claim("results", "Claude Code's reading of the replacements", r"A rough reading of the (\d+) pairs of values, .*? sorts them as (\d+) the questions' own values, (\d+) the same thing with more detail, (\d+) where a real change cannot be ruled out, and (\d+) another thing under the same name",
+              (n_replaced, reading["question"], reading["detail"], reading["open"], reading["other"])),
+        Claim("results", "the reading covers every replacement", r"sorts them as", g["reading covers the replacements"]),
+        Claim("results", "pilot text: list-order reach", r"the pilot's window reached the evidence in (\d+) of the (\d+) `knowledge-update` questions, against (\d+) in clock order",
+              (k["reached_list_order"], k["listed"], k["reached"])),
+        Claim("results", "pilot text: run cost, list-order replay", r"The harness counts \$([\d.]+) for the pilot run, \$([\d.]+) of it the list-order replay",
+              (f"{run['cost']:.2f}", f"{listed:.2f}")),
+        Claim("results", "M4 limitations: accepted answers", r"One of the (\d+) `knowledge-update` answers the judge accepted is not an answer by the reading \(`(\w+)`\)",
+              (k["correct"], *wrong_on_content)),
+        Claim("results", "M4 limitations: replacements read", r"The reading of the (\d+) replacements is Claude Code's", (n_replaced,)),
+        Claim("results", "M4 limitations: the facts message", r"The facts message takes ([\d,]+) tokens from the window", (FACT_TOKENS,)),
+        Claim("results", "M4 limitations: other subjects", r"(\d+) of the ([\d,]+) facts have a subject other than `user`",
+              (g["subjects other than user: facts, shown, histories"][0], stored)),
+        Claim("results", "M4 limitations: pilot size", r"The fourth strategy is a pilot on (\d+) questions, run once", (len(p["questions"]),)),
+    ]
 
 
 def main() -> int:

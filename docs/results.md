@@ -1,6 +1,7 @@
 # Results (draft)
 
-Status: M3, three strategies, all answers read by hand.
+Status: M3, three strategies, all answers read by hand; M4, a pilot of a
+fourth strategy on 20 questions, in a section of its own, read by hand.
 
 Every figure here is printed by `evals/results_table.py` from the rows in
 `evals/results/`, and `--check` finds each one in this file. The first two
@@ -178,6 +179,174 @@ final notes are not in English.
   the evidence in 5 of 10, against 10 of 61 in clock order over the whole type;
   the summaries differ between the two replays as between any two runs.
 
+## The pilot: a fourth strategy on 20 questions
+
+`FactGraphMemory` was built in the last week and measured as a pilot (0018,
+0019): on the first ten questions of each type, the 20 of the M1 pilot, on
+commit `2270c28` on 5 October, with `openai/gpt-4o-mini-2024-07-18`
+extracting the facts and the facts kept in Neo4j. No question errored and
+nothing was over budget; none of its 1,475 calls failed and no session was
+skipped. The answers were read by hand before this section was written
+(`evals/results/fact-graph-20261005-161632-review.md`), and the figures that
+come from the reading say so.
+
+The pilot is not a row of the table above. With ten questions per type one
+question moves a share by 0.1, a repeat of the same 20 questions changed one
+answer of the baseline, and a difference of one or two questions between two
+columns is not a finding. The other three columns are the rows their runs of
+2 and 3 October have for the same questions.
+
+| on the same 20 questions | `RecentTurnsMemory` | `RetrievalMemory` | `ConsolidatingMemory` | `FactGraphMemory`, pilot |
+|---|---:|---:|---:|---:|
+| correct, single-session-user | 0 of 10 | 9 of 10 | 4 of 10 | 10 of 10 |
+| correct, knowledge-update | 3 of 10 | 6 of 10 | 3 of 10 | 6 of 10 |
+| evidence reached, single-session-user | 0 of 10 | 10 of 10 | 0 of 10 | 0 of 10 |
+| evidence reached, knowledge-update | 3 of 10 | 10 of 10 | 3 of 10 | 3 of 10 |
+| cost per question, single-session-user | $0.0198 | $0.0204 | $0.0885 | $0.0460 |
+| cost per question, knowledge-update | $0.0198 | $0.0204 | $0.0865 | $0.0456 |
+
+Correct is the judge's verdict, evidence reached counts the window, and cost
+is the strategy's calls per question as the harness counts them, as in the
+table above. The pilot's own figures (0013, 0018):
+
+| `FactGraphMemory`, pilot | single-session-user | knowledge-update |
+|---|---:|---:|
+| recall / precision | 0.000 / 0.0000 | 0.150 / 0.0028 |
+| messages / tokens recalled | 35 / 7,874 | 36 / 7,791 |
+| evidence consolidated (0018), mean | 1.000 | 0.900 |
+| evidence consolidated (0018) or reached | 10 of 10 | 10 of 10 |
+| facts stored / replaced / held / shown, mean | 118.6 / 3.1 / 115.5 / 76.4 | 119.5 / 3.9 / 115.6 / 77.0 |
+| facts message tokens, mean / max | 998 / 1,000 | 999 / 1,000 |
+| facts said again / entries dropped | 3 / 0 | 17 / 0 |
+| sessions skipped / all | 0 / 489 | 0 / 473 |
+| facts from an evidence turn: replaced / shown / all | 0 / 12 / 12 | 6 / 26 / 32 |
+| extraction per question: calls, tokens in / out | 48.9, 157,033 / 3,944 | 47.3, 155,718 / 3,998 |
+| cost per question: answer + extraction | $0.0201 + $0.0259 | $0.0199 + $0.0258 |
+| cost per question, counted / with framing | $0.0460 / $0.0465 | $0.0456 / $0.0461 |
+
+Every fact shown counts as one recalled item that matches no evidence, so
+recall is the window's, and precision falls by construction: it is reported
+and not compared (0018). One of the messages is the facts message.
+*Evidence consolidated (0018)* is the share of evidence turns whose session
+gave at least one fact that was shown, which says less than the third row's
+figure of that name: not that the fact is the right one. A fact is from an
+evidence turn when the turn the extraction named for it is one. A fact said
+again with the value it has is not stored. The list-order replay's calls
+are not in the cost.
+
+The `knowledge-update` breakdown of 0009 for the pilot, by the window alone
+and with a session counted as reached when it gave a fact that was shown
+(0013), as questions and correct answers:
+
+| `FactGraphMemory`, pilot | neither | earlier | later | both | not two sessions |
+|---|---:|---:|---:|---:|---:|
+| window | 7, 4 | 0, 0 | 3, 2 | 0, 0 | 0 |
+| consolidated (0018) or reached | 0, 0 | 0, 0 | 2, 1 | 8, 5 | 0 |
+
+Question by question: the judge's verdict on each strategy's answer, and for
+the pilot whether an evidence turn was in the window and what became of the
+facts that name one.
+
+| question | type | `RecentTurnsMemory` | `RetrievalMemory` | `ConsolidatingMemory` | `FactGraphMemory` | evidence reached, pilot | facts from an evidence turn: replaced / shown / all |
+|---|---|---|---|---|---|---|---:|
+| `c8c3f81d` | single-session-user | no | yes | yes | yes | no | 0 / 0 / 0 |
+| `ad7109d1` | single-session-user | no | yes | no | yes | no | 0 / 1 / 1 |
+| `36580ce8` | single-session-user | no | yes | no | yes | no | 0 / 1 / 1 |
+| `51a45a95` | single-session-user | no | no | yes | yes | no | 0 / 1 / 1 |
+| `86f00804` | single-session-user | no | yes | no | yes | no | 0 / 1 / 1 |
+| `6b168ec8` | single-session-user | no | yes | yes | yes | no | 0 / 1 / 1 |
+| `c14c00dd` | single-session-user | no | yes | no | yes | no | 0 / 1 / 1 |
+| `8ebdbe50` | single-session-user | no | yes | yes | yes | no | 0 / 2 / 2 |
+| `95bcc1c8` | single-session-user | no | yes | no | yes | no | 0 / 3 / 3 |
+| `66f24dbb` | single-session-user | no | yes | no | yes | no | 0 / 1 / 1 |
+| `07741c45` | knowledge-update | no | no | no | no | no | 0 / 5 / 5 |
+| `b6019101` | knowledge-update | yes | yes | yes | yes | yes | 1 / 4 / 5 |
+| `6071bd76` | knowledge-update | no | no | no | yes | no | 0 / 3 / 3 |
+| `a2f3aa27` | knowledge-update | no | no | no | yes | no | 1 / 1 / 2 |
+| `c6853660` | knowledge-update | no | yes | no | no | no | 1 / 1 / 2 |
+| `b01defab` | knowledge-update | yes | yes | no | no | no | 0 / 2 / 2 |
+| `0f05491a` | knowledge-update | no | no | yes | no | yes | 1 / 1 / 2 |
+| `6aeb4375` | knowledge-update | yes | yes | yes | yes | yes | 1 / 1 / 2 |
+| `06db6396` | knowledge-update | no | yes | no | yes | no | 1 / 3 / 4 |
+| `89941a94` | knowledge-update | no | yes | no | yes | no | 0 / 5 / 5 |
+
+### What the pilot says
+
+**It reports what happened on each question and does not rank (0019).**
+`RetrievalMemory` answered 9 and 6 of the same questions; the difference
+from the pilot's 10 and 6 is one question.
+
+**The value was written down, found and shown in most questions.** By the
+reading, as the review checked it against the rows, the value the question
+asks for stood in a fact that was shown in 17 of the 20 questions, and 14 of
+the 17 were answered right. With no evidence turn in the window, the facts
+alone gave 14 of the 16 correct answers, 10 and 4. Eight of the 20 questions
+have more than 40,000 tokens between the evidence and the question, the
+distance beyond which the third row answered nothing; seven of the eight
+were judged right here and none of them in the third row's run. That shows
+the mechanism and is not a rate: a fact written once stays, where the notes
+are rewritten after every session.
+
+**The rule replaced the changed value in six of the ten `knowledge-update`
+questions, and four of the six were answered right.** In each of the six
+the earlier value's fact was replaced by the question's newer value, and no
+fact that names an evidence turn was replaced by anything else. In two
+questions the two values got different names, so both held and both were
+shown, and one was answered right; in two more one of the values never
+became a fact, and one was judged right. In the spike the changed value
+kept its name in 2 of the 8 histories (0018). Those are counts of what
+happened in single runs on different histories, with names that are not
+reproducible, and not a rate.
+
+**The judge's 6 of 10 is 5 of 10 counted on content.** `6071bd76` asks
+whether the user switched to more water or less; the answer gives the
+current ratio and says that it cannot tell which. The letter of the
+`knowledge-update` template permits the `yes`: the answer contains the
+updated value, and the template has no rule against an answer that holds
+only a part of the reference. The reading counts the question as not
+answered. `07741c45` was judged `no` for a missing part under the same
+template, "in a shoe rack" against "in a shoe rack in my closet". The table
+keeps the judge's verdicts (0008).
+
+**The four errors sit in four places.** By the reading: the extraction in
+`b01defab`, where the second of two books in one sentence never became a
+fact; the rule in `c6853660`, which asks which way a value moved after the
+rule had rightly replaced the earlier one; the generation in `0f05491a`;
+and a nearly right answer in `07741c45`. None sits in the selection: every
+fact that names an evidence turn and held was shown. The rows add that in
+`c6853660` the turn the newer fact names says "increased", and the
+extraction kept the value without the word.
+
+**The facts message costs window.** In `b01defab` the baseline's window
+began five turns earlier and held three turns of the later evidence
+session, from which it answered right in M2. Here the window holds 6,790
+tokens of raw turns against the baseline's 7,960, 1,170 fewer, and the
+facts message holds 1,000. The third row's window on the question is the
+same as the pilot's, and both answered "I do not know".
+
+**In `0f05491a` the model repeated its own earlier turn.** The answer was
+300, and 300 stands in the assistant's turn just before the user's
+correction to 120, in the context of all five runs on that question. The
+two baseline runs answered 300 as well. The pilot had the fact with 120
+shown and the correction in the window. That error is the model's and no
+strategy's.
+
+**Most replacements are not updates.** The rule replaced 70 of the 2,381
+facts in the 20 histories. 9 of the 122 facts from evidence sessions were
+replaced, each by a fact of the question's other evidence session and none
+by a session without evidence. A rough reading of the 70 pairs of values,
+made by Claude Code while the review was written and no part of the
+author's hand reading, sorts them as 6 the questions' own values, 6 the
+same thing with more detail, 13 where a real change cannot be ruled out,
+and 45 another thing under the same name. In this run none of the 45 was a
+fact that names an evidence turn, so what 0018 calls the harm of the rule
+did not reach an answer here.
+
+**Order and cost.** Replayed in list order (0009), the pilot's window
+reached the evidence in 5 of the 10 `knowledge-update` questions, against 3
+in clock order. The harness counts $1.18 for the pilot run, $0.26 of it the
+list-order replay, which is not the strategy's cost (0018).
+
 ## Limitations found in M2
 
 - The answer model is not deterministic at temperature 0: the same context
@@ -215,3 +384,23 @@ final notes are not in English.
 - The hand reading was one reading made in dialogue with an AI assistant, as
   for M1 and M2, and the notes are kept next to the review.
 - The run's commit stamp carries `+dirty` from untracked result files.
+
+## Limitations found in M4
+
+- The fourth strategy is a pilot on 20 questions, run once. Its figures
+  show what happened on those questions and do not rank it (0019).
+- One of the 6 `knowledge-update` answers the judge accepted is not an
+  answer by the reading (`6071bd76`); the figure is the judge's.
+- The names the extraction gives its facts are not reproducible (0018), so
+  which values replace each other can differ in a second run.
+- The reading was less independent than the earlier ones: the AI assistant
+  read first. The reading of the 70 replacements is Claude Code's and not
+  the author's.
+- The facts message takes 1,000 tokens from the window, and that lost one
+  question the turns the baseline answered it from.
+- The extraction drops parts of a sentence and can write a fact surer than
+  the user said it.
+- 15 of the 2,381 facts have a subject other than `user`; the graph is a
+  star around the user, as 0018 said it would be.
+- The first question of each type had been run in the strategy's smoke
+  test before the pilot (0018).

@@ -69,6 +69,12 @@ answered 300, which is Starbucks' real earlier rule: it ignored the context in
 favour of its training data. This is neither a retrieval error nor a data
 error.
 
+> Correction, 2026-10-05: the 300 was in the context as well, in the
+> assistant's turn `answer_d6d2eba8_2:5`, just before the user's correction.
+> The rows do not support "in favour of its training data"; the model
+> repeated the assistant's turn against the correction. See "Corrections to
+> earlier reviews" in `fact-graph-20261005-161632-review.md`.
+
 ## Data notes
 
 These do not affect the baseline, whose evidence was missing in all five. They

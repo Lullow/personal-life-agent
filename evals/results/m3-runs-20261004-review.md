@@ -204,3 +204,8 @@ evidence name the object differently), `a2f3aa27` ("close to 1300" against
 (gravel against hybrid). All five behaved as flagged. `b01defab` and
 `603deb26` again had turns of the evidence session restating the fact in
 the window.
+
+> Correction, 2026-10-05: `b01defab` had no turn of its evidence session in
+> the window in this run; the window begins at `d75869af:2`, in the next
+> session. The statement holds for `603deb26`. See "Corrections to earlier
+> reviews" in `fact-graph-20261005-161632-review.md`.

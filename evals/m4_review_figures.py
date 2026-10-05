@@ -5,11 +5,19 @@ question into a box and say, fact by fact, what the model was shown. This
 script checks them against the rows, against the facts the run left in its
 graphs (`fact-graph-20261005-161632-facts.jsonl`, written by
 `evals/export_fact_graphs.py`) and against the dataset, counts what those
-alone can say, and prints every figure the review quotes.
+alone can say, and prints every figure the review quotes
+(`fact-graph-20261005-161632-review.md`).
 
-    .venv/bin/python evals/m4_review_figures.py            # the figures
-    .venv/bin/python evals/m4_review_figures.py --check    # the notes, statement by statement, against them
-    .venv/bin/python evals/m4_review_figures.py --facts    # per question, the facts of its evidence sessions
+The notes are kept as they were handed over. Where the rows say something
+else the check says DIFF, and it goes on saying so: the review lists those
+places. `compute()` needs the committed files only, which is what
+`evals/results_table.py --check` uses; what is read out of the turns
+themselves needs the pinned dataset as well (ADR 0004).
+
+    .venv/bin/python evals/m4_review_figures.py             # the figures
+    .venv/bin/python evals/m4_review_figures.py --check     # the notes, statement by statement, against them
+    .venv/bin/python evals/m4_review_figures.py --facts     # per question, the facts of its evidence sessions
+    .venv/bin/python evals/m4_review_figures.py --replaced  # every replaced fact, with the reading of it
 """
 
 from __future__ import annotations
@@ -29,6 +37,7 @@ RESULTS = ROOT / "evals" / "results"
 RUN = RESULTS / "fact-graph-20261005-161632.jsonl"
 FACTS = RESULTS / "fact-graph-20261005-161632-facts.jsonl"
 NOTES = RESULTS / "lasning-m4-anteckningar.md"
+CONTEXT_0F05491A = RESULTS / "reading-fact-graph-20261005-161632-0f05491a-full.md"
 # The other runs' rows for the same questions: the M1 pilot, and the three runs of the comparison.
 OTHERS = {
     "pilot baseline": "recent-turns-20260927-132525.jsonl",
@@ -67,6 +76,40 @@ INSTRUCTIONS = (
     ("86f00804", "continue"),
 )
 NUMBER_300 = re.compile(r"(?<![\d,.])300(?![\d,])")
+# The questions that ask for the change or for the earlier state, by their wording. The notes tag two of
+# them; 6071bd76 asks which way the value moved, as c6853660 does.
+ASKS_FOR_THE_CHANGE = ("6071bd76", "c6853660", "89941a94")
+# A reading of the 70 replacements by Claude Code, from each pair of values alone: the sessions were not
+# read, and this is no part of the author's hand reading. (question, relation, replaced value) -> class.
+#   detail: the new value says the same thing with more detail.
+#   open:   one thing with one value at a time, both values of one kind, not from a borrowed chat and not
+#           a name replaced again and again: a real change cannot be ruled out from the two values.
+# A replacement of a fact naming an evidence turn by the question's newer fact is counted by the script
+# ("question"). Every other one is "other": the values are of different kinds, several facts fell to one,
+# the name is a slot for the latest of many (recent, last, upcoming), or the session is a borrowed chat.
+READING = {
+    ("8ebdbe50", "car_model", "Honda Civic"): "detail",
+    ("95bcc1c8", "trip_destination", "Japan"): "detail",
+    ("07741c45", "trip_to_europe_plan", "planning a trip to Europe soon"): "detail",
+    ("c6853660", "sweetener_used", "stevia"): "detail",
+    ("c6853660", "planned_trip_destination", "Japan"): "detail",
+    ("89941a94", "location", "California"): "detail",
+    ("36580ce8", "planned_trip_destination", "Seoul or Osaka"): "open",
+    ("36580ce8", "planned_trip_duration", "10 days"): "open",
+    ("8ebdbe50", "waking_time", "7:15"): "open",
+    ("95bcc1c8", "wake_up_time_weekdays", "6:30 am"): "open",
+    ("95bcc1c8", "language_learning_interest", "French"): "open",
+    ("b6019101", "summer_trip_plan", "visit best friend's new city"): "open",
+    ("6071bd76", "dinner_party_plan", "this weekend"): "open",
+    ("6071bd76", "trip_plan", "Japan"): "open",
+    ("c6853660", "road_trip_destination", "Tybee Island"): "open",
+    ("c6853660", "planned_trip_month", "October"): "open",
+    ("b01defab", "next_book_plan", "The Poppy War"): "open",
+    ("6aeb4375", "reading_time_before_bed", "10-15 minutes"): "open",
+    ("06db6396", "current_location", "Oahu"): "open",
+}
+CLASSES = ("question", "detail", "open", "other")
+FAR_TOKENS = 40000  # the distance beyond which no answer of the M3 run was right (m3-runs-20261004-review.md)
 
 
 # -- what is read --------------------------------------------------------------
@@ -158,9 +201,20 @@ def find(st: list[dict], text: str) -> list[dict]:
     return [f for f in st if short(f).casefold() == text.casefold()]
 
 
-def window(r: dict, turns: dict) -> list[str]:
-    """The raw turns of a row's context, in order: its sources without the ids that are no turn."""
-    return [s for s in r["sources"] if s in turns]
+def window(r: dict) -> list[str]:
+    """The raw turns of a row's context, in order: its sources without the ids of facts and summaries."""
+    return [s for s in r["sources"] if not s.startswith(("fact:", "summary:"))]
+
+
+def raw_tokens(r: dict) -> int:
+    """The tokens of the raw turns in a row's context: what one recall held, less the facts or the notes."""
+    return r["tokens_used"] - (r.get("facts_message_tokens") or 0) - (r.get("summary_tokens") or 0)
+
+
+def reading_of(q: str, x: dict, newer: list[dict]) -> str:
+    if x["evidence_turn"] and newer and x["replaced_by"] == newer[0]["id"]:
+        return "question"
+    return READING.get((q, x["relation"], x["value"]), "other")
 
 
 def changed(q: str, st: list[dict]) -> dict:
@@ -185,59 +239,83 @@ def changed(q: str, st: list[dict]) -> dict:
 
 # -- the figures ---------------------------------------------------------------
 
+def printed_turn(turn_id: str) -> tuple[str, str]:
+    """A turn's role and text as the committed printout of 0f05491a's context shows them."""
+    text = CONTEXT_0F05491A.read_text(encoding="utf-8")
+    m = re.search(rf"^#### {re.escape(turn_id)}, (\w+)[^\n]*\n(.*?)(?=^#### |\Z)", text, re.M | re.S)
+    return (m.group(1), m.group(2)) if m else ("", "")
+
+
 def compute() -> dict:
+    """What the committed files say: the pilot's rows, its exported facts, the notes and the other runs' rows."""
     rs, fs, nr = rows(), facts(), notes_rows()
     others = {name: run_rows(RESULTS / file) for name, file in OTHERS.items()}
-    turns = histories(set(rs))
     tokens = COUNTER.count
     st = {q: states(rs[q], fs[q]) for q in rs}
     every = [(q, x) for q in rs for x in st[q]]
     wrong = [q for q in rs if not rs[q]["correct"]]
+    right = [q for q in rs if rs[q]["correct"]]
     of_type = lambda t: [q for q in rs if rs[q]["question_type"] == t]  # noqa: E731
-    f: dict = {"_rows": rs, "_states": st, "_notes": nr, "_turns": turns, "_others": others}
+    ev_sessions = lambda q: {session_of(e) for e in rs[q]["evidence"]}  # noqa: E731
+    f: dict = {"_rows": rs, "_states": st, "_notes": nr, "_others": others}
 
     f["questions"] = Counter(SHORT[r["question_type"]] for r in rs.values())
     f["commit"] = sorted({r["commit"] for r in rs.values()})
+    calls = [c for r in rs.values() for c in r["calls"]]
+    f["calls / failed"] = (len(calls), sum(c["failed"] for c in calls))
+    f["sessions extracted / skipped, entries dropped, facts said again"] = (
+        sum(r["extractions"] for r in rs.values()), sum(r["extractions_failed"] for r in rs.values()),
+        sum(r["entries_dropped"] for r in rs.values()), sum(r["facts_said_again"] for r in rs.values()))
+    f["errors / over budget"] = (sum(r["status"] != "ok" for r in rs.values()), sum(r["over_budget"] for r in rs.values()))
     f["facts file covers the rows"] = set(fs) == set(rs)
     f["facts agree with the rows"] = all(facts_agree(rs[q], fs[q]) for q in rs)
     f["wrong"] = {SHORT[t]: [q for q in of_type(t) if q in wrong] for t in TYPES}
-    f["correct"] = len(rs) - len(wrong)
+    f["correct"] = len(right)
+    f["correct by type"] = {SHORT[t]: sum(q in right for q in of_type(t)) for t in TYPES}
     f["idk"] = [q for q in rs if idk(rs[q])]
     f["verdicts"] = Counter(r["verdict"] for r in rs.values())
     reached = [q for q in rs if rs[q]["evidence_reached"]]
-    f["evidence in the window: questions, correct"] = (reached, sum(bool(rs[q]["correct"]) for q in reached))
-    f["correct without evidence in the window"] = sum(bool(rs[q]["correct"]) for q in rs if q not in reached)
+    f["evidence in the window: questions, correct"] = (reached, sum(q in right for q in reached))
+    f["correct without evidence in the window"] = sum(q not in reached for q in right)
     f["raw turns of an evidence session in the window"] = {
-        q: sorted({session_of(s) for s in window(rs[q], turns[q])} & {session_of(e) for e in rs[q]["evidence"]})
-        for q in rs if {session_of(s) for s in window(rs[q], turns[q])} & {session_of(e) for e in rs[q]["evidence"]}}
+        q: sorted({session_of(s) for s in window(rs[q])} & ev_sessions(q))
+        for q in rs if {session_of(s) for s in window(rs[q])} & ev_sessions(q)}
+    f["evidence consolidated below 1"] = {q: r["evidence_consolidated"] for q, r in rs.items() if r["evidence_consolidated"] < 1}
+    f["the other runs' verdicts where this one was wrong"] = {
+        q: {name: r[q]["verdict"] for name, r in others.items()} for q in wrong}
+    # M3 found nothing in the notes from beyond 40,000 tokens of conversation; the same questions here.
+    far = [q for q in rs if rs[q]["distance_tokens"] >= FAR_TOKENS]
+    f["beyond 40,000 tokens: questions, correct here, correct for the consolidating run"] = (
+        len(far), sum(q in right for q in far), sum(bool(others["consolidating"][q]["correct"]) for q in far))
+    f["beyond 40,000 tokens, by type"] = {SHORT[t]: (sum(q in far for q in of_type(t)), sum(q in far and q in right for q in of_type(t))) for t in TYPES}
 
     # The two values of each knowledge-update question (the notes' table "vad hände med det ändrade värdet").
     ch = {q: changed(q, st[q]) for q in of_type(KU)}
     f["_changed"] = ch
     f["changed value: notes / facts"] = {q: (c["said"], c["found"]) for q, c in ch.items()}
     f["newer fact shown"] = {q: c["newer_shown"] for q, c in ch.items()}
-    f["earlier replaced by the newer: questions, correct"] = (
-        [q for q, c in ch.items() if c["found"] == "replaced"],
-        sum(bool(rs[q]["correct"]) for q, c in ch.items() if c["found"] == "replaced"))
-    f["both held and shown: questions, correct"] = (
-        [q for q, c in ch.items() if c["found"] == "held" and c["newer_shown"]],
-        sum(bool(rs[q]["correct"]) for q, c in ch.items() if c["found"] == "held" and c["newer_shown"]))
-    f["one value never a fact: questions, correct"] = (
-        [q for q, c in ch.items() if c["found"] == "never a fact" or not c["newer"]],
-        sum(bool(rs[q]["correct"]) for q, c in ch.items() if c["found"] == "never a fact" or not c["newer"]))
+    groups = {"earlier replaced by the newer": lambda c: c["found"] == "replaced",
+              "both held and shown": lambda c: c["found"] == "held" and c["newer_shown"],
+              "one value never a fact": lambda c: c["found"] == "never a fact" or not c["newer"]}
+    for name, test in groups.items():
+        f[f"{name}: questions, correct"] = ([q for q, c in ch.items() if test(c)], sum(q in right for q, c in ch.items() if test(c)))
+    f["every knowledge-update question in one group"] = sorted(
+        q for name in groups for q in f[f"{name}: questions, correct"][0]) == sorted(ch)
     f["newer fact names a turn that is no evidence turn"] = [q for q, c in ch.items() if c["newer"] and not c["newer_names_evidence"]]
     f["evidence turns no fact names"] = {
         q: sorted(e for e in rs[q]["evidence"] if not any(x["turn_id"] == e for x in st[q]))
         for q in rs if any(not any(x["turn_id"] == e for x in st[q]) for e in rs[q]["evidence"])}
+    f["asks for the change or the earlier state"] = {q: (rs[q]["question"], rs[q]["verdict"]) for q in ASKS_FOR_THE_CHANGE}
 
     # What the rule replaced (ADR 0018 counts the harm next to the gain).
     replaced = [(q, x) for q, x in every if x["replaced"]]
+    f["_replaced"] = replaced
     f["facts stored / replaced"] = (len(every), len(replaced))
     f["replaced by type"] = {SHORT[t]: sum(x["replaced"] for q in of_type(t) for x in st[q]) for t in TYPES}
     f["replaced, by question"] = {q: sum(x["replaced"] for x in st[q]) for q in rs}
+    f["replaced, most in one question"] = max((n, q) for q, n in f["replaced, by question"].items())
     f["replaced, most common relations"] = Counter(x["relation"] for _, x in replaced).most_common(6)
     from_evidence = [(q, x) for q, x in every if x["evidence_session"]]
-    ev_sessions = lambda q: {session_of(e) for e in rs[q]["evidence"]}  # noqa: E731
     f["facts from evidence sessions: all / replaced / shown"] = (
         len(from_evidence), sum(x["replaced"] for _, x in from_evidence), sum(x["shown"] for _, x in from_evidence))
     f["of those replaced: by an evidence session / by a session without evidence"] = (
@@ -252,13 +330,17 @@ def compute() -> dict:
         (q, short(x), f"-> {x['replacer']['value']}", x["replacer"]["session_id"]) for q, x in every if x["evidence_turn"] and x["replaced"]]
     f["those replaced by the question's newer fact"] = sum(
         bool(ch[q]["newer"]) and x["replaced_by"] == ch[q]["newer"][0]["id"] for q, x in every if x["evidence_turn"] and x["replaced"])
-    f["replaced where the new value contains the old"] = sum(
-        x["value"].casefold() in x["replacer"]["value"].casefold() for _, x in replaced)
     borrowed = lambda sid: sid.startswith(("sharegpt", "ultrachat"))  # noqa: E731
     f["replaced with a ShareGPT or UltraChat session on either side"] = sum(
         borrowed(x["session_id"]) or borrowed(x["replacer"]["session_id"]) for _, x in replaced)
     f["replaced neither from nor by an evidence session"] = sum(
         not x["evidence_session"] and x["replacer"]["session_id"] not in ev_sessions(q) for q, x in replaced)
+    # Claude Code's reading of the replacements (READING), from each pair of values alone.
+    reading = Counter(reading_of(q, x, ch[q]["newer"] if q in ch else []) for q, x in replaced)
+    f["reading of the replacements"] = {c: reading[c] for c in CLASSES}
+    f["reading covers the replacements"] = (
+        sum(reading.values()) == len(replaced)
+        and all(sum(q == k[0] and x["relation"] == k[1] and x["value"] == k[2] for q, x in replaced) == 1 for k in READING))
     chain = [x for x in st["95bcc1c8"] if x["relation"] == "trip_destination"]
     f["95bcc1c8 trip_destination: replaced, days from the first to the last"] = (
         sum(x["replaced"] for x in chain),
@@ -282,6 +364,7 @@ def compute() -> dict:
     f["names held more than once: all / across sessions"] = (len(again), sum(len({x["session_id"] for x in v}) > 1 for v in again.values()))
     f["names shown more than once"] = {(k[0], k[2]): sum(x["shown"] for x in v) for k, v in again.items() if sum(x["shown"] for x in v) > 1}
     shown = [(q, x) for q, x in every if x["shown"]]
+    f["_shown"] = shown
     origin = lambda q, x: ("evidence session" if x["evidence_session"] else  # noqa: E731
                            "ShareGPT or UltraChat" if borrowed(x["session_id"]) else "other session of the benchmark")
     f["facts shown by origin: facts"] = dict(Counter(origin(q, x) for q, x in shown))
@@ -294,41 +377,33 @@ def compute() -> dict:
     f["share of the shown lines' tokens from ShareGPT or UltraChat"] = round(by_origin["ShareGPT or UltraChat"] / sum(by_origin.values()), 3)
     f["the same, per question, largest"] = sorted(
         ((round(c["ShareGPT or UltraChat"] / sum(c.values()), 2), q) for q, c in per_question.items()), reverse=True)[:4]
-    f["facts naming an assistant turn: stored / shown"] = (
-        sum(turns[q][x["turn_id"]].role == "assistant" for q, x in every),
-        sum(turns[q][x["turn_id"]].role == "assistant" for q, x in shown))
 
     # b01defab: what the facts message's tokens cost the window.
     q = "b01defab"
-    ours, base = window(rs[q], turns[q]), window(others["baseline"][q], turns[q])
+    ours, base, cons = window(rs[q]), window(others["baseline"][q]), window(others["consolidating"][q])
     out = [s for s in base if s not in ours]
-    f["b01defab: first raw turn, baseline / consolidating / here"] = (
-        base[0], window(others["consolidating"][q], turns[q])[0], ours[0])
-    f["b01defab: raw tokens in the window, baseline / here"] = (
-        sum(tokens(turns[q][s].content) for s in base), sum(tokens(turns[q][s].content) for s in ours))
-    f["b01defab: turns the baseline had and this run did not, their tokens"] = (out, sum(tokens(turns[q][s].content) for s in out))
-    f["b01defab: of them from an evidence session, their tokens"] = (
-        [s for s in out if session_of(s) in ev_sessions(q)],
-        sum(tokens(turns[q][s].content) for s in out if session_of(s) in ev_sessions(q)))
+    f["b01defab: first raw turn, baseline / consolidating / here"] = (base[0], cons[0], ours[0])
+    f["b01defab: raw tokens in the window, baseline / consolidating / here"] = (
+        raw_tokens(others["baseline"][q]), raw_tokens(others["consolidating"][q]), raw_tokens(rs[q]))
+    f["b01defab: turns the baseline had and this run did not, their tokens"] = (
+        out, raw_tokens(others["baseline"][q]) - raw_tokens(rs[q]))
+    f["b01defab: of them from an evidence session"] = [s for s in out if session_of(s) in ev_sessions(q)]
+    f["b01defab: the consolidating run's window is this run's"] = cons == ours
     f["b01defab: facts message tokens"] = rs[q]["facts_message_tokens"]
-    f["b01defab: turns naming The Nightingale, baseline / consolidating / here"] = tuple(
-        [s for s in window(r[q], turns[q]) if "Nightingale" in turns[q][s].content] for r in (others["baseline"], others["consolidating"], rs))
     f["b01defab: answers, baseline / consolidating / here"] = (
         others["baseline"][q]["verdict"], others["consolidating"][q]["verdict"], rs[q]["verdict"])
     f["b01defab: facts naming The Nightingale"] = [short(x) for x in st[q] if "nightingale" in short(x).casefold()]
 
-    # 0f05491a: where the 300 of the answer stands.
+    # 0f05491a: where the 300 of the answer stands. The turn's words are read from the committed printout.
     q = "0f05491a"
-    f["0f05491a: turns in the window with 300 as a number"] = [
-        (s, turns[q][s].role) for s in window(rs[q], turns[q]) if NUMBER_300.search(turns[q][s].content)]
-    f["0f05491a: the same for the pilot baseline / baseline / consolidating"] = tuple(
-        [(s, turns[q][s].role) for s in window(others[name][q], turns[q]) if NUMBER_300.search(turns[q][s].content)]
-        for name in ("pilot baseline", "baseline", "consolidating"))
+    role, text = printed_turn("answer_d6d2eba8_2:5")
+    f["0f05491a: answer_d6d2eba8_2:5 in the printout: role, says 300 stars"] = (role, bool(NUMBER_300.search(text)) and "stars" in text)
+    f["0f05491a: runs with answer_d6d2eba8_2:5 in the context"] = [
+        name for name, r in (*others.items(), ("here", rs)) if "answer_d6d2eba8_2:5" in r[q]["sources"]]
     f["0f05491a: facts with 300 as a number"] = [short(x) for x in st[q] if NUMBER_300.search(x["value"])]
     f["0f05491a: answers with 300"] = {name: bool(NUMBER_300.search(r[q]["answer"])) for name, r in (*others.items(), ("here", rs))}
-    f["0f05491a: turns of the later evidence session in the window / in the session"] = (
-        sum(session_of(s) == "answer_d6d2eba8_2" for s in window(rs[q], turns[q])),
-        sum(session_of(s) == "answer_d6d2eba8_2" for s in turns[q]))
+    f["0f05491a: verdicts"] = {name: r[q]["verdict"] for name, r in (*others.items(), ("here", rs))}
+    f["0f05491a: turns of the later evidence session in the window"] = sum(session_of(s) == "answer_d6d2eba8_2" for s in window(rs[q]))
 
     # c8c3f81d and c6853660: the turn a fact names, and the evidence turn.
     f["c8c3f81d: facts of the evidence session, the turn each names"] = [
@@ -337,7 +412,6 @@ def compute() -> dict:
     f["c6853660: the newer fact's turn, the evidence turn of its session"] = (
         ch["c6853660"]["newer"][0]["turn"],
         [int(e.rsplit(":", 1)[1]) for e in rs["c6853660"]["evidence"] if session_of(e) == ch["c6853660"]["newer"][0]["session_id"]])
-    f["c6853660: 'increased' in the turn the newer fact names"] = "increased" in turns["c6853660"][ch["c6853660"]["newer"][0]["turn_id"]].content
 
     # The boxes of the reading.
     f["labelled"] = len(nr)
@@ -345,7 +419,47 @@ def compute() -> dict:
     f["label types agree"] = all(SHORT[rs[q]["question_type"]] == t for q, (t, _, _) in nr.items())
     f["box agrees with correct"] = all(box.startswith(CORRECT_BOXES) == bool(rs[q]["correct"]) for q, (_, box, _) in nr.items())
     f["error boxes"] = Counter(nr[q][1].split(",")[0] for q in wrong)
-    f["correct boxes"] = Counter((nr[q][0], nr[q][1].split(",")[0]) for q in rs if q not in wrong)
+    f["correct boxes"] = Counter((nr[q][0], nr[q][1].split(",")[0]) for q in right)
+    f["judged right and not an answer by the reading"] = [q for q in right if "D" in [t.strip() for t in nr[q][1].split(",")]]
+    f["the baseline's two runs differ on"] = [q for q in rs if others["pilot baseline"][q]["verdict"] != others["baseline"][q]["verdict"]]
+    # The value in a shown fact: as the notes count it, and with the rows' reading of "slutsats" (the answer
+    # is the value of no fact the row quotes).
+    quoted = lambda q: [x for text in re.findall(r'"([A-Za-z_0-9]+ = [^"]+)"', nr[q][2]) for x in find(st[q], text)]  # noqa: E731
+    in_a_value = lambda q: any(ANSWER_WORDS.get(q, rs[q]["gold_answer"]).casefold() in x["value"].casefold() for x in quoted(q))  # noqa: E731
+    by_notes = [q for q in rs if nr[q][1].split(",")[0] != "utdraget" and "slutsats" not in nr[q][1]]
+    by_rows = [q for q in by_notes if q in wrong or in_a_value(q)]
+    f["_in_a_value"] = {q: in_a_value(q) for q in right if "slutsats" not in nr[q][1]}
+    f["value in a shown fact, by the notes: questions, correct"] = (len(by_notes), sum(q in right for q in by_notes))
+    f["value in a shown fact, by the rows: questions, correct"] = (len(by_rows), sum(q in right for q in by_rows))
+    f["counted by the notes and an inference by the rows"] = [q for q in by_notes if q not in by_rows]
+    return f
+
+
+def add_history(f: dict) -> dict:
+    """What is read out of the turns themselves, from the pinned dataset (ADR 0004)."""
+    rs, st, others, ch = f["_rows"], f["_states"], f["_others"], f["_changed"]
+    turns = histories(set(rs))
+    tokens = COUNTER.count
+    f["_turns"] = turns
+    f["facts naming an assistant turn: stored / shown"] = (
+        sum(turns[q][x["turn_id"]].role == "assistant" for q in rs for x in st[q]),
+        sum(turns[q][x["turn_id"]].role == "assistant" for q, x in f["_shown"]))
+    q = "b01defab"
+    out = f["b01defab: of them from an evidence session"]
+    f["b01defab: tokens of the evidence session's turns the baseline had"] = sum(tokens(turns[q][s].content) for s in out)
+    f["b01defab: turns naming The Nightingale, baseline / consolidating / here"] = tuple(
+        [s for s in window(r[q]) if "Nightingale" in turns[q][s].content] for r in (others["baseline"], others["consolidating"], rs))
+    q = "0f05491a"
+    f["0f05491a: turns in the window with 300 as a number"] = [
+        (s, turns[q][s].role) for s in window(rs[q]) if NUMBER_300.search(turns[q][s].content)]
+    f["0f05491a: the same for the pilot baseline / baseline / retrieval / consolidating"] = tuple(
+        [(s, turns[q][s].role) for s in window(others[name][q]) if NUMBER_300.search(turns[q][s].content)] for name in OTHERS)
+    f["0f05491a: the printout's turn is the dataset's"] = turns[q]["answer_d6d2eba8_2:5"].content[:200] in printed_turn("answer_d6d2eba8_2:5")[1]
+    f["0f05491a: turns of the later evidence session, in the window / in the session"] = (
+        f["0f05491a: turns of the later evidence session in the window"], sum(session_of(s) == "answer_d6d2eba8_2" for s in turns[q]))
+    f["0f05491a: the assistant's next turn takes the correction"] = "requires 120 stars" in turns[q]["answer_d6d2eba8_2:7"].content
+    newer = ch["c6853660"]["newer"][0]
+    f["c6853660: 'increased' in the turn the newer fact names"] = "increased" in turns["c6853660"][newer["turn_id"]].content
     return f
 
 
@@ -387,10 +501,7 @@ def claims(f: dict) -> list[Claim]:
             cs.append(Claim("notes", f"{q}: the later evidence turn in the window", rf"{q} KU: [^`]*?senare evidensturen i fönstret",
                             rs[q]["ku_breakdown"] in ("later", "both")))
         if "slutsats" not in nr[q][1]:
-            words = ANSWER_WORDS.get(q, rs[q]["gold_answer"]).casefold()
-            quoted = [x for text in re.findall(r'"([A-Za-z_0-9]+ = [^"]+)"', nr[q][2]) for x in find(st[q], text)]
-            cs.append(Claim("notes", f"{q}: the answer is a quoted fact's value", rf"{q} (?:KU|SSU): {box}",
-                            any(words in x["value"].casefold() for x in quoted)))
+            cs.append(Claim("notes", f"{q}: the answer is a quoted fact's value", rf"{q} (?:KU|SSU): {box}", f["_in_a_value"][q]))
     # The two values of each knowledge-update question.
     for q, (newer, earlier, said) in CHANGED.items():
         cs.append(Claim("notes", f"{q}: transcribed from its row", rf"{q} KU:",
@@ -404,6 +515,7 @@ def claims(f: dict) -> list[Claim]:
     only_new = [q for q in right if q in ch and ch[q]["newer_shown"] and not (ch[q]["found"] == "held")]
     both_shown = [q for q in right if q in ch and ch[q]["newer_shown"] and ch[q]["found"] == "held"]
     with_value = [q for q in rs if nr[q][1].split(",")[0] != "utdraget" and "slutsats" not in nr[q][1]]
+    asking = [q for q in rs if "frågar efter" in nr[q][1]]
     reached, reached_right = f["evidence in the window: questions, correct"]
     cs += [
         # The four wrong answers.
@@ -416,10 +528,12 @@ def claims(f: dict) -> list[Claim]:
         Claim("notes", "0f05491a: table row", r"`0f05491a` \| ja \| ja \| ersatt \(rätt\) \|", ch["0f05491a"]["newer_shown"] and ch["0f05491a"]["found"] == "replaced"),
         Claim("notes", "0f05491a: the later evidence turn in the window", r"den senare evidensturen ligger dessutom i fönstret", rs["0f05491a"]["ku_breakdown"] == "later"),
         Claim("notes", "0f05491a: the evidence turn's words", r"\(\"I need 120 stars … not 300\"\)",
-              any(e in window(rs["0f05491a"], turns["0f05491a"]) and "I need 120 stars" in turns["0f05491a"][e].content
+              any(e in window(rs["0f05491a"]) and "I need 120 stars" in turns["0f05491a"][e].content
                   and "not 300" in turns["0f05491a"][e].content for e in rs["0f05491a"]["evidence"])),
         Claim("notes", "0f05491a: 300 as in the pilot and in M2", r"svaret blev 300, samma tal som baslinjen i piloten och i M2",
               all(f["0f05491a: answers with 300"][k] for k in ("here", "pilot baseline", "baseline"))),
+        Claim("notes", "0f05491a: 300 in the assistant's turn before", r"så talet står i fönstret, troligen i assistentens tur före",
+              ("answer_d6d2eba8_2:5", "assistant") in f["0f05491a: turns in the window with 300 as a number"]),
         Claim("notes", "0f05491a: 300 in no fact", r"`0f05491a` ett tal som inte står i något kort", not f["0f05491a: facts with 300 as a number"]),
         *(Claim("notes", f"error boxes: {box}", rf"\| {box} \| (\d+) \|", (len(boxed(box, wrong)),)) for box in ERROR_BOXES),
         Claim("notes", "error boxes: sum", r"\| summa \| (\d+) \|", (len(wrong),)),
@@ -460,10 +574,14 @@ def claims(f: dict) -> list[Claim]:
               [{str(len(reached))}, set(reached), {str(reached_right)}], kind="sets"),
         Claim("notes", "correct from the facts alone", r"Korten ensamma gav (\d+) rätta svar \((\d+) SSU, (\d+) KU\)",
               (len(boxed("korten", right)), len([q for q in boxed("korten", right) if nr[q][0] == "SSU"]), len([q for q in boxed("korten", right) if nr[q][0] == "KU"]))),
-        Claim("notes", "questions tagged as asking for the change", r"På de (\w+) frågor som gäller ändringen eller det tidigare läget", (SV[len(tagged("frågar efter"))],)),
+        Claim("notes", "questions tagged as asking for the change", r"På de (\w+) frågor som gäller ändringen eller det tidigare läget", (SV[len(asking)],)),
+        Claim("notes", "questions that ask for the change, by their wording", r"På de (\w+) frågor som gäller ändringen eller det tidigare läget",
+              (SV[len(ASKS_FOR_THE_CHANGE)],)),
         Claim("notes", "verdicts not named", r"De övriga (\d+) utslagen är rimliga", (len(rs) - 3,)),
         # The questions the notes leave for the rows.
         Claim("notes", "b01defab: first raw turn of the window", r"Här börjar fönstret i nästa samtal \(`([\w:]+)`\)", (f["b01defab: first raw turn, baseline / consolidating / here"][2],)),
+        Claim("notes", "b01defab: the baseline had later turns of the evidence session", r"I M2 svarade baslinjen rätt ur senare turer i evidenssamtalet",
+              others["baseline"]["b01defab"]["verdict"] == "yes" and len(f["b01defab: turns naming The Nightingale, baseline / consolidating / here"][0]) == 3),
         Claim("notes", "c8c3f81d: facts naming the evidence turn", r"\"facts naming an evidence turn\" är (\d+)", (rs["c8c3f81d"]["evidence_turn_facts"],)),
         Claim("notes", "c8c3f81d: evidence consolidated", r"\"Evidence consolidated\" är ändå ([\d.]+)", (f"{f['c8c3f81d: evidence consolidated']:.2f}",)),
         Claim("notes", "c8c3f81d: no fact holds 'favourite'", r"meningen \"Nike has been my favourite brand\" finns inte i något kort",
@@ -493,10 +611,10 @@ def claims(f: dict) -> list[Claim]:
     ]
     # The instructions the notes found in a window, and that no answer followed.
     for q, text in INSTRUCTIONS:
-        w = window(rs[q], turns[q])
+        w = window(rs[q])
         cs.append(Claim("notes", f"{q}: instruction in the window: {text[:24]}", re.escape(text),
                         any(turns[q][s].role == "user" and text in turns[q][s].content for s in w)))
-    last_user = [s for s in window(rs["36580ce8"], turns["36580ce8"]) if turns["36580ce8"][s].role == "user"][-1]
+    last_user = [s for s in window(rs["36580ce8"]) if turns["36580ce8"][s].role == "user"][-1]
     cs.append(Claim("notes", "36580ce8: the last user message before the question", r"som sista användarmeddelande före frågan i `36580ce8`",
                     turns["36580ce8"][last_user].content == INSTRUCTIONS[1][1]))
     return cs
@@ -513,8 +631,18 @@ def print_facts(f: dict) -> None:
                       f"{'shown' if x['shown'] else 'not shown'}, {state}")
 
 
+def print_replaced(f: dict) -> None:
+    ch = f["_changed"]
+    for n, (q, x) in enumerate(f["_replaced"], 1):
+        print(f"{n:2d} {q} {reading_of(q, x, ch[q]['newer'] if q in ch else []):8s} {x['relation']}: {x['value']!r} -> {x['replacer']['value']!r}"
+              f"   [{x['session_id']} {x['at'][:10]} -> {x['replacer']['session_id']} {x['replacer']['at'][:10]}]")
+
+
 def main() -> int:
-    f = compute()
+    f = add_history(compute())
+    if "--replaced" in sys.argv:
+        print_replaced(f)
+        return 0
     if "--check" in sys.argv:
         text = re.sub(r"\s+", " ", NOTES.read_text(encoding="utf-8"))
         cs = claims(f)

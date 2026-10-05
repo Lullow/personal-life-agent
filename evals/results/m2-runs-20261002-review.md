@@ -124,6 +124,11 @@ model in such cases, and a correct answer at recall 0 is not always a guess.
 
 - `0f05491a`, `RecentTurnsMemory`: answered from training data (300 stars, 12
   months), as in the pilot.
+
+  > Correction, 2026-10-05: the 300 stood in the context, in the assistant's
+  > turn `answer_d6d2eba8_2:5`, in this run and in the pilot. See
+  > "Corrections to earlier reviews" in
+  > `fact-graph-20261005-161632-review.md`.
 - `853b0a1d`, `RecentTurnsMemory`: "I do not know" in other words, graded
   correctly as wrong.
 - `a2f3aa27`, `c6853660`, `89941a94` and `b01defab` from the pilot's data
