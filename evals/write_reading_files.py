@@ -22,8 +22,6 @@ from evals.verify_adr_numbers import (  # noqa: E402
 )
 
 OUT = ROOT / "data" / "longmemeval"
-data = json.loads(DATASET.read_bytes())
-by_id = {x["question_id"]: x for x in data}
 
 
 def evidence_turns(x):
@@ -42,42 +40,52 @@ def fence(text: str) -> str:
     return "`" * max(3, longest + 1)
 
 
-# -- 3. special cases --------------------------------------------------------
-lines = ["# Special cases: 618f13b2, 2133c1b5, e66b632c", "",
-         "Full text from longmemeval_s_cleaned.json. Evidence turns are the turns marked",
-         "`has_answer: true`, ordered by session date. Nothing is truncated.", ""]
-for qid in ("618f13b2", "2133c1b5", "e66b632c"):
-    x = by_id[qid]
-    lines += [f"## {qid}", "",
-              f"- question_type: {x['question_type']}",
-              f"- question_date: {x['question_date']}",
-              f"- answer_session_ids: {', '.join(x['answer_session_ids'])}",
-              f"- question: {x['question']}",
-              f"- answer: {x['answer']}", ""]
-    for n, e in enumerate(evidence_turns(x), start=1):
-        f = fence(e["content"])
-        lines += [f"### Evidence turn {n}: {e['session_id']}:{e['turn_index']}, {e['role']}", "",
-                  f"Session date {e['date']}; position {e['list_position']} in the list.", "",
-                  f + "text", e["content"], f, ""]
-(OUT / "special_cases.md").write_text("\n".join(lines), encoding="utf-8")
+def main() -> int:
+    """Write both files, over what is there. Only when run: an import writes nothing."""
+    data = json.loads(DATASET.read_bytes())
+    by_id = {x["question_id"]: x for x in data}
 
-# -- 4. KU worksheet ---------------------------------------------------------
-pool_ku = [x for x in data if x["question_type"] == KU and not exclusion_reasons(x)]
-max_ev = max(len(evidence_turns(x)) for x in pool_ku)
-header = ["question_id", "question", "answer", "question_date"]
-for n in range(1, max_ev + 1):
-    header += [f"evidence_{n}_session_id", f"evidence_{n}_date", f"evidence_{n}_role", f"evidence_{n}_text"]
-header.append("label")
-with (OUT / "ku_labeling_worksheet.csv").open("w", encoding="utf-8-sig", newline="") as fh:
-    w = csv.writer(fh)
-    w.writerow(header)
-    for x in pool_ku:
-        row = [x["question_id"], x["question"], str(x["answer"]), x["question_date"]]
-        ev = evidence_turns(x)
-        for n in range(max_ev):
-            row += [ev[n]["session_id"], ev[n]["date"], ev[n]["role"], ev[n]["content"]] if n < len(ev) else ["", "", "", ""]
-        row.append("")
-        w.writerow(row)
+    # -- 3. special cases --------------------------------------------------------
+    lines = ["# Special cases: 618f13b2, 2133c1b5, e66b632c", "",
+             "Full text from longmemeval_s_cleaned.json. Evidence turns are the turns marked",
+             "`has_answer: true`, ordered by session date. Nothing is truncated.", ""]
+    for qid in ("618f13b2", "2133c1b5", "e66b632c"):
+        x = by_id[qid]
+        lines += [f"## {qid}", "",
+                  f"- question_type: {x['question_type']}",
+                  f"- question_date: {x['question_date']}",
+                  f"- answer_session_ids: {', '.join(x['answer_session_ids'])}",
+                  f"- question: {x['question']}",
+                  f"- answer: {x['answer']}", ""]
+        for n, e in enumerate(evidence_turns(x), start=1):
+            f = fence(e["content"])
+            lines += [f"### Evidence turn {n}: {e['session_id']}:{e['turn_index']}, {e['role']}", "",
+                      f"Session date {e['date']}; position {e['list_position']} in the list.", "",
+                      f + "text", e["content"], f, ""]
+    (OUT / "special_cases.md").write_text("\n".join(lines), encoding="utf-8")
 
-print("special cases:", OUT / "special_cases.md")
-print("worksheet:", OUT / "ku_labeling_worksheet.csv", "rows:", len(pool_ku), "max evidence turns:", max_ev)
+    # -- 4. KU worksheet ---------------------------------------------------------
+    pool_ku = [x for x in data if x["question_type"] == KU and not exclusion_reasons(x)]
+    max_ev = max(len(evidence_turns(x)) for x in pool_ku)
+    header = ["question_id", "question", "answer", "question_date"]
+    for n in range(1, max_ev + 1):
+        header += [f"evidence_{n}_session_id", f"evidence_{n}_date", f"evidence_{n}_role", f"evidence_{n}_text"]
+    header.append("label")
+    with (OUT / "ku_labeling_worksheet.csv").open("w", encoding="utf-8-sig", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(header)
+        for x in pool_ku:
+            row = [x["question_id"], x["question"], str(x["answer"]), x["question_date"]]
+            ev = evidence_turns(x)
+            for n in range(max_ev):
+                row += [ev[n]["session_id"], ev[n]["date"], ev[n]["role"], ev[n]["content"]] if n < len(ev) else ["", "", "", ""]
+            row.append("")
+            w.writerow(row)
+
+    print("special cases:", OUT / "special_cases.md")
+    print("worksheet:", OUT / "ku_labeling_worksheet.csv", "rows:", len(pool_ku), "max evidence turns:", max_ev)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
