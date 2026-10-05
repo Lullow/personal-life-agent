@@ -1,0 +1,94 @@
+SSU  1/10 c8c3f81d     reached=no  recall=0.00 tokens= 7851 ok correct=True
+SSU  2/10 ad7109d1     reached=no  recall=0.00 tokens= 7904 ok correct=True
+SSU  3/10 36580ce8     reached=no  recall=0.00 tokens= 7976 ok correct=True
+SSU  4/10 51a45a95     reached=no  recall=0.00 tokens= 7831 ok correct=True
+SSU  5/10 86f00804     reached=no  recall=0.00 tokens= 7916 ok correct=True
+SSU  6/10 6b168ec8     reached=no  recall=0.00 tokens= 7890 ok correct=True
+SSU  7/10 c14c00dd     reached=no  recall=0.00 tokens= 7857 ok correct=True
+SSU  8/10 8ebdbe50     reached=no  recall=0.00 tokens= 7835 ok correct=True
+SSU  9/10 95bcc1c8     reached=no  recall=0.00 tokens= 7746 ok correct=True
+SSU 10/10 66f24dbb     reached=no  recall=0.00 tokens= 7929 ok correct=True
+KU   1/10 07741c45     reached=no  recall=0.00 tokens= 7568 ok correct=False
+KU   2/10 b6019101     reached=yes recall=0.50 tokens= 7731 ok correct=True
+KU   3/10 6071bd76     reached=no  recall=0.00 tokens= 7953 ok correct=True
+KU   4/10 a2f3aa27     reached=no  recall=0.00 tokens= 7514 ok correct=True
+KU   5/10 c6853660     reached=no  recall=0.00 tokens= 7824 ok correct=False
+KU   6/10 b01defab     reached=no  recall=0.00 tokens= 7790 ok correct=False
+KU   7/10 0f05491a     reached=yes recall=0.50 tokens= 7996 ok correct=False
+KU   8/10 6aeb4375     reached=yes recall=0.50 tokens= 7768 ok correct=True
+KU   9/10 06db6396     reached=no  recall=0.00 tokens= 7931 ok correct=True
+KU  10/10 89941a94     reached=no  recall=0.00 tokens= 7835 ok correct=True
+
+single-session-user: 10 questions (a pilot at this size: one question moves a share by 0.10)
+  errors (left out of accuracy)                        0
+  accuracy                                             10 of 10 (1.00)
+  verdict neither yes nor no                           0
+  answer not a string                                  0
+  recall, mean                                         0.000
+  precision, mean                                      0.0000
+  evidence reached                                     0 of 10
+  evidence consolidated, mean (ADR 0013)               1.000
+  evidence consolidated or reached                     10 of 10
+  facts stored / replaced / held / shown, mean (0018)  118.6 / 3.1 / 115.5 / 76.4
+  facts message tokens, mean / max                     998 / 1,000
+  facts said again / entries dropped                   3 / 0
+  sessions skipped / all (0016, 0018)                  0 / 489
+  facts from an evidence turn: replaced / shown / all  0 / 12 / 12
+  messages recalled, mean / max                        35 / 47
+  tokens_used, mean / max                              7,874 / 7,976
+  over budget                                          0
+  long-term, sample / whole list                       10 of 10 / 55 of 61
+  distance to evidence, median, sample / whole list    45,340 / 47,080
+  history tokens, mean                                 101,436
+  answer call per question, mean                       7,953 in, 19 out
+  extraction per question, mean (ADR 0018)             157,033 in, 3,944 out, 48.9 calls
+  strategy cost per question, mean                     $0.0460, each call at its model's price
+
+knowledge-update: 10 questions (a pilot at this size: one question moves a share by 0.10)
+  errors (left out of accuracy)                        0
+  accuracy                                             6 of 10 (0.60)
+  verdict neither yes nor no                           0
+  answer not a string                                  0
+  recall, mean                                         0.150
+  precision, mean                                      0.0028
+  evidence reached                                     3 of 10
+  recall, list order, mean                             0.250
+  evidence reached, list order                         5 of 10
+  evidence consolidated, mean (ADR 0013)               0.900
+  evidence consolidated or reached                     10 of 10
+  facts stored / replaced / held / shown, mean (0018)  119.5 / 3.9 / 115.6 / 77.0
+  facts message tokens, mean / max                     999 / 1,000
+  facts said again / entries dropped                   17 / 0
+  sessions skipped / all (0016, 0018)                  0 / 473
+  facts from an evidence turn: replaced / shown / all  6 / 26 / 32
+  messages recalled, mean / max                        36 / 45
+  tokens_used, mean / max                              7,791 / 7,996
+  over budget                                          0
+  long-term, sample / whole list                       7 of 10 / 55 of 69
+  distance to evidence, median, sample / whole list    23,419 / 21,367
+  history tokens, mean                                 101,432
+  answer call per question, mean                       7,876 in, 20 out
+  extraction per question, mean (ADR 0018)             155,718 in, 3,998 out, 47.3 calls
+  strategy cost per question, mean                     $0.0456, each call at its model's price
+  breakdown, two evidence sessions (ADR 0009)          questions  correct
+    neither                                            7  4
+    earlier                                            0  0
+    later                                              3  2
+    both                                               0  0
+    not two evidence sessions (reported apart)         0
+  breakdown, consolidated or reached (ADR 0013)        questions  correct
+    neither                                            0  0
+    earlier                                            0  0
+    later                                              2  1
+    both                                               8  5
+    not two evidence sessions (reported apart)         0
+
+all calls: 1475, 0 failed; 4,841,115 tokens in, 119,437 out; $1.1817, each call at its model's price
+  answer                    158,295 in        388 out  $0.3996
+  extract                 3,127,511 in     79,417 out  $0.5168
+  extract-list-order      1,552,385 in     39,492 out  $0.2566
+  grade                       2,924 in        140 out  $0.0087
+
+rows: data/longmemeval/runs/fact-graph-20261005-161632.jsonl
+graphs: 20 in Neo4j, each row's under its graph_tag. In http://localhost:7474:
+  MATCH (a:Entity {tag: 'fact-graph-20261005-161632:c8c3f81d:clock'})-[r]->(b) RETURN a, r, b
