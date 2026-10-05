@@ -85,6 +85,48 @@ Svagheten står utskriven i ADR 0018: överskrivningen träffade det
 Kvar: committa, sedan bygget på tisdag. Är klassen, testerna och
 röktestet inte klara tisdag kväll mäts ingen pilot.
 
+---
+
+Eftermiddagen: bygget och piloten, en dag tidigare än planerat.
+
+FactGraphMemory är byggd, med ett lager i Neo4j och ett i processen för
+tester och torrkörning. 421 tester är gröna. De två första strategierna
+torrkördes om på alla 122 frågor och gav samma rader som förut, så inget
+gammalt har ändrats.
+
+Jag bad om en dubbelkoll före commit. Den hittade ett trasigt skript och
+två meningar som lät som om piloten redan var mätt.
+
+Bra att tänka på: när agenten provade att alla skript gick att importera
+råkade ett av dem köras, och det skrev över två filer under data/. Jag
+minns inte att jag hade skrivit något för hand i dem. Skriptet har fått
+ett skydd så att det inte kan hända igen.
+
+Sedan mätningen. Rökprovet på en fråga per typ gick utan fel. Piloten
+kördes 16:16–16:29: 20 frågor, 1 475 anrop, inget misslyckat. Riggen
+räknar 1,18 dollar, och saldot sjönk 1,15.
+
+Utfallet är inte läst än. Enligt ADR 0019 redovisar jag ingen siffra
+förrän jag har läst svaren för hand.
+
+En sak syntes redan i rökprovet: det gamla och det nya värdet fick olika
+namn, så inget ersattes och båda visades. Det är svagheten som ADR 0018
+varnade för.
+
+Agenten gjorde också sju val där ADR 0018 är tyst. Jag sa att det såg
+bra ut, men jag har inte gått igenom dem ett och ett.
+
+Kvar: läsa de 20 svaren, pilottabellen, stycket i docs/method.md och att
+stänga M4.
+
+---
+
+Läsfilerna för piloten är klara. En har alla 20 svar i en tabell bredvid
+facit, domarens utslag och de tre andra strategiernas svar. Två har
+frågorna uppdelade efter om svaret blev rätt eller fel, med det som
+visades för modellen per fråga. Utfallet är oläst tills jag har läst dem
+för hand (ADR 0019).
+
 ## 2026-10-04
 
 Körningen av den tredje strategin (sammanfattning) blev klar under
