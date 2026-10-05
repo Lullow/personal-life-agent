@@ -421,6 +421,8 @@ def compute() -> dict:
     f["error boxes"] = Counter(nr[q][1].split(",")[0] for q in wrong)
     f["correct boxes"] = Counter((nr[q][0], nr[q][1].split(",")[0]) for q in right)
     f["judged right and not an answer by the reading"] = [q for q in right if "D" in [t.strip() for t in nr[q][1].split(",")]]
+    f["beyond 40,000 tokens, judged right and not an answer by the reading"] = [
+        q for q in far if q in f["judged right and not an answer by the reading"]]
     f["the baseline's two runs differ on"] = [q for q in rs if others["pilot baseline"][q]["verdict"] != others["baseline"][q]["verdict"]]
     # The value in a shown fact: as the notes count it, and with the rows' reading of "slutsats" (the answer
     # is the value of no fact the row quotes).

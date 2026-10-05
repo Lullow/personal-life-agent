@@ -369,14 +369,15 @@ with both evidence turns in its context.
   session's only fact was the earlier value, and once it was replaced the
   session had no fact shown. The figure reads the rule working as evidence
   lost.
-- **Distance did not decide here.** In M3 no answer was right beyond 40,000
-  tokens between the evidence and the question, 0 of 50. Eight of these 20
-  questions lie beyond that; seven were judged right here, five of five
-  single-fact questions and two of three changed-fact ones (`6071bd76` is
-  one of the two), and none of the eight in the third row's run. With
-  eight questions that shows the mechanism and is not a rate: a fact
-  written once stays, and it is found among the 89 to 145 facts a history
-  gave.
+- **Distance did not decide on these eight questions.** In M3 no answer was
+  right beyond 40,000 tokens between the evidence and the question, 0 of
+  50. Eight of these 20 questions lie beyond that. On these eight the
+  judge accepted seven answers here, five of five single-fact questions
+  and two of three changed-fact ones; counted on content it is six of
+  eight, since `6071bd76` is one of the two. In the third row's run, made
+  on other days, the judge accepted none of the eight. That is what
+  happened on eight questions in two runs, and not a rate: a fact written
+  once stays, and it is found among the 89 to 145 facts a history gave.
 - **A subject other than `user`.** The prompt allows one, and in the spike
   the model never used one (0018). Here 15 of the 2,381 facts have one, in
   3 of the 20 histories: Phil Farber (6), Luna and Max (8) and Ruth (1).

@@ -282,10 +282,12 @@ asks for stood in a fact that was shown in 17 of the 20 questions, and 14 of
 the 17 were answered right. With no evidence turn in the window, the facts
 alone gave 14 of the 16 correct answers, 10 and 4. Eight of the 20 questions
 have more than 40,000 tokens between the evidence and the question, the
-distance beyond which the third row answered nothing; seven of the eight
-were judged right here and none of them in the third row's run. That shows
-the mechanism and is not a rate: a fact written once stays, where the notes
-are rewritten after every session.
+distance beyond which the third row answered nothing. On these eight
+questions the judge accepted seven answers here, six counted on content,
+since `6071bd76` is one of the seven; in the third row's run, made on other
+days, it accepted none. That is what happened on eight questions in two
+runs, and not a rate: a fact written once stays, where the notes are
+rewritten after every session.
 
 **The rule replaced the changed value in six of the ten `knowledge-update`
 questions, and four of the six were answered right.** In each of the six

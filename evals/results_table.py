@@ -506,6 +506,7 @@ def claims_pilot_text(f: dict) -> list[Claim]:
     never, never_right = g["one value never a fact: questions, correct"]
     in_fact, in_fact_right = g["value in a shown fact, by the rows: questions, correct"]
     far, far_right, far_third = g["beyond 40,000 tokens: questions, correct here, correct for the consolidating run"]
+    far_unanswered = g["beyond 40,000 tokens, judged right and not an answer by the reading"]
     stored, n_replaced = g["facts stored / replaced"]
     from_evidence, from_evidence_replaced, _ = g["facts from evidence sessions: all / replaced / shown"]
     by_evidence, by_others = g["of those replaced: by an evidence session / by a session without evidence"]
@@ -532,9 +533,10 @@ def claims_pilot_text(f: dict) -> list[Claim]:
               (in_fact, len(p["questions"]), in_fact_right, in_fact)),
         Claim("results", "reading: correct from the facts alone", r"the facts alone gave (\d+) of the (\d+) correct answers, (\d+) and (\d+)",
               (cb[("SSU", "korten")] + cb[("KU", "korten")], g["correct"], cb[("SSU", "korten")], cb[("KU", "korten")])),
-        Claim("results", "rows: beyond 40,000 tokens", r"(\w+) of the (\d+) questions have more than 40,000 tokens between the evidence and the question, .*? (\w+) of the (\w+) were judged right here and none of them in the third row's run",
-              (far, len(p["questions"]), far_right, far)),
-        Claim("results", "rows: beyond 40,000 tokens, the third row", r"and none of them in the third row's run", far_third == 0),
+        Claim("results", "rows: beyond 40,000 tokens", r"(\w+) of the (\d+) questions have more than 40,000 tokens between the evidence and the question, .*? On these (\w+) questions the judge accepted (\w+) answers here, (\w+) counted on content, since `(\w+)` is one of the (\w+)",
+              (far, len(p["questions"]), far, far_right, far_right - len(far_unanswered), *far_unanswered, far_right)),
+        Claim("results", "rows: beyond 40,000 tokens, the third row, another day", r"in the third row's run, made on other days, it accepted none",
+              far_third == 0 and not {file.split("-")[-2] for file in PILOT.values()} & {RUNS["consolidating"].split("-")[-2]}),
         Claim("results", "facts: the changed value replaced", r"replaced the changed value in (\w+) of the (\w+) `knowledge-update` questions, and (\w+) of the (\w+) were answered right",
               (len(replaced), k["n"], replaced_right, len(replaced))),
         Claim("results", "facts: each by the question's newer value", r"In each of the (\w+) the earlier value's fact was replaced by the question's newer value",
