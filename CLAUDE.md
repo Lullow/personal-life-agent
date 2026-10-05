@@ -48,6 +48,7 @@ pip install -e '.[eval]'
 .venv/bin/python evals/verify_adr_numbers.py        # recompute every figure in ADRs 0004–0009
 .venv/bin/python evals/verify_adr_0011.py           # the same for ADR 0011
 .venv/bin/python evals/verify_adr_0015.py           # the same for ADRs 0015–0017
+.venv/bin/python evals/verify_adr_0018.py           # the same for ADRs 0018–0019
 .venv/bin/python evals/results_table.py --check    # every figure in docs/results.md
 
 # Run
