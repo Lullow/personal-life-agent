@@ -7,7 +7,9 @@ larger work in the memory layer.
 
 **The VG project** compares three conversation-memory strategies against each
 other on LongMemEval: `RecentTurnsMemory`, `RetrievalMemory` and
-`ConsolidatingMemory`. The comparison is what gets graded.
+`ConsolidatingMemory`. The comparison is what gets graded. A fourth strategy,
+`FactGraphMemory`, was built in M4, to be measured as a pilot in a table of
+its own (0018, 0019); it is not a part of that comparison.
 
 **The agent project** is the household planner itself — the `life_agent`
 package, a Typer CLI. In the VG project it is the consumer of the memory layer

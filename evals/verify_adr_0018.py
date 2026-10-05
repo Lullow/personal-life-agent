@@ -3,9 +3,12 @@
 For 0018 the figures describe what the fact extraction gave on the eight
 histories no run measures, and what the record's rule does when round three's
 saved replies are replayed under it: what is stored, what is replaced, and
-what a retrieve would show. For 0019 they are the three measured strategies on
-the pilot's 20 questions and an estimate of what the pilot costs. Nothing here
-calls a model, answers a question or grades one.
+what a retrieve would show. The replay goes through FactGraphMemory itself,
+with the saved replies in place of the model and the facts kept in the
+process, so the figures are the class's and not a second copy of its rule.
+For 0019 they are the three measured strategies on the pilot's 20 questions
+and an estimate of what the pilot costs. Nothing here calls a model, answers a
+question or grades one.
 
 The replies were made under round three's rule, not under the record's: the
 replay shows what the record's rule does to those replies, not what the model
@@ -29,24 +32,25 @@ import re
 import statistics
 import sys
 from collections import Counter
-from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from evals.estimate_cost import CHOSEN_N  # noqa: E402
-from evals.longmemeval import QUESTIONS, cost_of, load_questions, usd  # noqa: E402
+from evals.longmemeval import QUESTIONS, consolidated, cost_of, load_questions, usd  # noqa: E402
+from evals.longmemeval import replay as write_history  # noqa: E402
 from evals.results_table import RESULTS, RUNS, rows as run_rows  # noqa: E402
 from evals.spike_fact_graph import PROMPTS, key_of, norm, prompt_id, replacements  # noqa: E402
 from evals.verify_adr_numbers import (  # noqa: E402
     ADR_DIR, KU, PILOT_PER_TYPE, SSU, TYPES, Claim, TiktokenCounter, build_records, evidence_sessions, fmt, judge,
-    load_pinned, replay_order,
+    load_pinned, question_time, replay_order,
 )
-from life_agent.agent.memory import MemoryRecord, RetrievalMemory, _terms  # noqa: E402
+from life_agent.agent.memory import (  # noqa: E402
+    DEFAULT_BUDGET_TOKENS, EXTRACTION_SYSTEM_PROMPT, FACT_TOKENS, FactGraphMemory, _bm25, _terms,
+)
 
 SPIKE = RESULTS / "spike"  # the spike's replies, copied from data/longmemeval/spike/ to be committed
 M1_PILOT = "recent-turns-20260927-132525.jsonl"
-FACT_TOKENS = 1000  # ADR 0018's F; the class takes the constant over when it is built
 # What each spike question's answer needs, read by hand from its reference
 # answer. A definition, not a fact: "the fact holding the answer" is a fact
 # whose relation or value contains this.
@@ -87,12 +91,8 @@ def saved(round_: int, qid: str) -> list[dict]:
 
 
 def line_of(fact: dict) -> str:
-    """A fact as ADR 0018 shows it, to the extraction call and to the answering model."""
+    """A saved reply's fact as ADR 0018 shows it; evals/write_spike_reading.py writes its sheet with it."""
     return f"{fact['subject']} / {fact['relation']} = {fact['value']}"
-
-
-def same_fact(a: dict, b: dict) -> bool:
-    return key_of(a) == key_of(b) and norm(a["value"]) == norm(b["value"])
 
 
 def content_key(session: list[dict]) -> str:
@@ -103,61 +103,18 @@ def content_key(session: list[dict]) -> str:
 
 # -- ADR 0018's rule, replayed over saved replies ------------------------------
 
-def stored_facts(rows: list[dict]) -> tuple[list[dict], int]:
-    """The replacement rule of ADR 0018 over one history's replies, session by session.
+class SavedReplies:
+    """Stands in for the extraction model: each call gets the next session's saved reply."""
 
-    Returns the facts stored, in order, each with the fact that replaced it if
-    any, and how many facts were not stored because they were said again.
-    """
-    stored: list[dict] = []
-    said_again = 0
-    for row in rows:
-        held = [f for f in stored if f["replaced_by"] is None]
-        new: list[dict] = []
-        confirmed: set[str] = set()
-        for entry in row["facts"]:
-            fact = dict(entry, session_id=row["session_id"], at=row["at"], replaced_by=None, replaced_at=None,
-                        evidence_turn=entry["turn"] in row["evidence_turns"],
-                        evidence_session=bool(row["evidence_turns"]))
-            again = [old for old in held if same_fact(old, fact)]
-            if again or any(same_fact(other, fact) for other in new):
-                confirmed.update(old["id"] for old in again)
-                said_again += 1
-                continue
-            fact["id"] = f"fact:{row['session_id']}:{len(new)}"
-            new.append(fact)
-        for fact in new:
-            for old in held:
-                if old["replaced_by"] is None and key_of(old) == key_of(fact) and old["id"] not in confirmed:
-                    old["replaced_by"], old["replaced_at"] = fact["id"], row["at"]
-        stored += new
-    return stored, said_again
+    def __init__(self, rows: list[dict]) -> None:
+        self._rows = iter(rows)
+
+    def chat_json(self, system_prompt: str, messages: list[dict[str, str]]) -> dict:
+        return {"facts": next(self._rows)["facts"]}
 
 
-def facts_shown(question: str, held: list[dict], turn_text: dict[tuple[str, int], str],
-                counter: TiktokenCounter, with_turn: bool = True) -> tuple[list[int], list[int]]:
-    """What ADR 0018's retrieve takes of the facts that hold: positions by rank, and those taken, in stored order.
-
-    The ranking is ADR 0011's, read off RetrievalMemory so that it is the same
-    code; *with_turn* False ranks a fact on its line alone, the rejected rule.
-    """
-    index = RetrievalMemory(token_counter=counter)
-    for i, fact in enumerate(held):
-        text = line_of(fact) + (" " + turn_text[(fact["session_id"], fact["turn"])] if with_turn else "")
-        index.write(MemoryRecord(id=str(i), role="assistant", content=text, kind="message",
-                                 at=datetime.fromisoformat(fact["at"]), session_id=fact["session_id"]))
-    scores = index._scores(question, list(range(len(held))))
-    ranked = sorted((i for i in scores if scores[i] > 0), key=lambda i: (-scores[i], -i))
-    taken: list[int] = []
-    for i in ranked:
-        trial = sorted(taken + [i])
-        if counter.count("\n".join(line_of(held[j]) for j in trial)) <= FACT_TOKENS:
-            taken = trial
-    return ranked, taken
-
-
-def has_answer(qid: str, fact: dict) -> bool:
-    return ANSWER[qid] in f"{fact['relation']} = {fact['value']}".casefold()
+def has_answer(qid: str, relation: str, value: str) -> bool:
+    return ANSWER[qid] in f"{relation} = {value}".casefold()
 
 
 def name_kept(round_: int, qid: str) -> bool:
@@ -170,43 +127,59 @@ def name_kept(round_: int, qid: str) -> bool:
 
 
 def replay(x: dict, rows: list[dict], counter: TiktokenCounter) -> dict:
-    """One spike history under ADR 0018: what is stored, and what the question would be shown."""
+    """One spike history through FactGraphMemory: what is stored, and what the question would be shown.
+
+    The history is written as the harness writes it (ADR 0004), and every
+    extraction call gets the reply the spike saved for that session.
+    """
     qid = x["question_id"]
-    turn_text = {(sid, j): t["content"] for sid, session in zip(x["haystack_session_ids"], x["haystack_sessions"])
-                 for j, t in enumerate(session)}
-    evidence = {(r["session_id"], t) for r in rows for t in r["evidence_turns"]}
-    stored, said_again = stored_facts(rows)
-    by_id = {f["id"]: f for f in stored}
-    held = [f for f in stored if f["replaced_by"] is None]
-    out = dict(qid=qid, stored=len(stored), said_again=said_again, replaced=len(stored) - len(held), held=len(held),
-               held_tokens=counter.count("\n".join(line_of(f) for f in held)))
-    from_evidence_sessions = [f for f in stored if f["evidence_session"]]
+    if any(r["failed"] for r in rows):
+        raise SystemExit(f"{qid}: a saved session has no reply to replay")
+    records, ends, evidence = build_records(x, "clock")
+    memory = FactGraphMemory(SavedReplies(rows), token_counter=counter)
+    write_history(memory, records, ends)
+    if [e.session_id for e in memory.extractions] != [r["session_id"] for r in rows]:
+        raise SystemExit(f"{qid}: the saved replies are not this history's sessions in replay order")
+    at = question_time(x)
+    stored = memory.facts
+    by_id = {f.id: f for f in stored}
+    held = [f for f in stored if f.holds(at)]
+    out = dict(qid=qid, stored=len(stored), said_again=sum(e.said_again for e in memory.extractions),
+               replaced=len(stored) - len(held), held=len(held),
+               held_tokens=counter.count("\n".join(f.line for f in held)))
+    with_evidence = {r.session_id for r in records if r.id in evidence}
+    from_evidence_sessions = [f for f in stored if f.session_id in with_evidence]
     by_filler = [f for f in from_evidence_sessions
-                 if f["replaced_by"] and not by_id[f["replaced_by"]]["evidence_session"]]
+                 if f.replaced_by and by_id[f.replaced_by].session_id not in with_evidence]
     out.update(evidence_session_facts=len(from_evidence_sessions),
-               replaced_by_filler=sum(norm(f["value"]) != norm(by_id[f["replaced_by"]]["value"]) for f in by_filler))
-    from_evidence_turns = [f for f in stored if f["evidence_turn"]]
+               replaced_by_filler=sum(norm(f.value) != norm(by_id[f.replaced_by].value) for f in by_filler))
+    from_evidence_turns = [f for f in stored if f.turn_id in evidence]
     out.update(evidence_turn_facts=len(from_evidence_turns),
-               evidence_turn_replaced=sum(f["replaced_by"] is not None for f in from_evidence_turns),
-               evidence_to_evidence=sum(f["replaced_by"] is not None and by_id[f["replaced_by"]]["evidence_turn"]
+               evidence_turn_replaced=sum(f.replaced_by is not None for f in from_evidence_turns),
+               evidence_to_evidence=sum(f.replaced_by is not None and by_id[f.replaced_by].turn_id in evidence
                                         for f in from_evidence_turns),
-               relations=Counter(f["relation"] for f in stored if f["replaced_by"] is not None),
-               evidence_turn_pairs=[(line_of(f), line_of(by_id[f["replaced_by"]]), by_id[f["replaced_by"]]["evidence_turn"])
-                                    for f in from_evidence_turns if f["replaced_by"] is not None])
-    for with_turn in (False, True):
-        ranked, taken = facts_shown(x["question"], held, turn_text, counter, with_turn)
-        rank = min((n for n, i in enumerate(ranked, start=1) if has_answer(qid, held[i])), default=None)
-        tag = "turn" if with_turn else "line"
-        out[f"answer_rank_{tag}"] = rank
-        out[f"answer_shown_{tag}"] = any(has_answer(qid, held[i]) for i in taken)
-        out[f"no_term_{tag}"] = len(held) - len(ranked)
-    shown = [held[i] for i in taken]
-    sessions_shown = {f["session_id"] for f in shown}
-    out.update(shown=len(shown), matching=len(ranked), evidence_turn_shown=sum(f["evidence_turn"] for f in shown),
-               shown_lines=[line_of(f) for f in shown],
-               shown_tokens=counter.count("\n".join(line_of(f) for f in shown)),
+               relations=Counter(f.relation for f in stored if f.replaced_by is not None),
+               evidence_turn_pairs=[(f.line, by_id[f.replaced_by].line, by_id[f.replaced_by].turn_id in evidence)
+                                    for f in from_evidence_turns if f.replaced_by is not None])
+
+    def answer_rank(ranked: list) -> int | None:
+        return min((n for n, f in enumerate(ranked, start=1) if has_answer(qid, f.relation, f.value)), default=None)
+
+    # The rule 0018 rejects: a fact ranked on its line alone, with the same BM25.
+    scores = _bm25(x["question"], {i: Counter(_terms(f.line)) for i, f in enumerate(held)})
+    on_line = [held[i] for i in sorted((i for i in scores if scores[i] > 0), key=lambda i: (-scores[i], -i))]
+    ranked = memory.ranking(x["question"], at=at)
+    retrieval = memory.retrieve(x["question"], at=at, budget_tokens=DEFAULT_BUDGET_TOKENS)
+    got = set(retrieval.sources)
+    shown = [f for f in held if f.id in got]
+    out.update(answer_rank_line=answer_rank(on_line), no_term_line=len(held) - len(on_line),
+               answer_rank_turn=answer_rank(ranked), no_term_turn=len(held) - len(ranked),
+               answer_shown_turn=any(has_answer(qid, f.relation, f.value) for f in shown),
+               shown=len(shown), matching=len(ranked), evidence_turn_shown=sum(f.turn_id in evidence for f in shown),
+               shown_lines=[f.line for f in shown],
+               shown_tokens=counter.count(retrieval.messages[0]["content"]) if shown else 0,
                evidence_turns=len(evidence),
-               evidence_consolidated=sum(sid in sessions_shown for sid, _ in evidence))
+               evidence_consolidated=len(consolidated(memory, retrieval.sources) & evidence))
     return out
 
 
@@ -252,7 +225,8 @@ def spike_rounds(histories: list[str], data: dict) -> dict:
                         if current.pop(old, None) is not None and alone:
                             narrow_by[fact["relation"]] += 1
                     current[fact["number"]] = fact
-        answer_extracted = sum(any(has_answer(q, fact) for r in per_history[q] if r["evidence_turns"] for fact in r["facts"])
+        answer_extracted = sum(any(has_answer(q, fact["relation"], fact["value"])
+                                   for r in per_history[q] if r["evidence_turns"] for fact in r["facts"])
                                for q in histories)
         evidence_rows = [r for r in rows if r["evidence_turns"]]
         assistant_turn = sum(data[q]["haystack_sessions"][data[q]["haystack_session_ids"].index(r["session_id"])]
@@ -353,7 +327,7 @@ def compute(text: str) -> dict:
     f.update(histories=histories, pool_ku=len(doc[KU]), unmeasured=len(histories), unmeasured_ssu=len(doc[SSU][CHOSEN_N:]),
              kept={round_: [q for q in histories if name_kept(round_, q)] for round_ in PROMPTS},
              alex={norm(fact["relation"]) for r in saved(3, "5c40ec5b") for fact in r["facts"] if norm(fact["value"]) == "alex"},
-             prompt_in_spike=system_prompt(text) == PROMPTS[3],
+             prompt_in_spike=system_prompt(text) == PROMPTS[3] == EXTRACTION_SYSTEM_PROMPT,
              prompt_tokens=counter.count(system_prompt(text)),
              examples_unused=not any(w in f"{data[q]['question']} {data[q]['answer']}".casefold()
                                      for t in TYPES for q in doc[t] for w in EXAMPLE_WORDS),
@@ -427,10 +401,10 @@ def claims_0018(f: dict) -> list[Claim]:
               note="docker image inspect, 2026-10-05"),
         Claim("0018", "driver version", r"Python driver `neo4j`, version (\d+\.\d+\.\d+)", kind="external", note="pip show neo4j, 2026-10-05"),
         Claim("0018", "the prompt is round three's", r"round three's, word for word", f["prompt_in_spike"],
-              note=f"spike_fact_graph.KEYED_SYSTEM_PROMPT, {f['prompt_tokens']} tokens"),
+              note=f"spike_fact_graph.KEYED_SYSTEM_PROMPT and memory.EXTRACTION_SYSTEM_PROMPT, {f['prompt_tokens']} tokens"),
         Claim("0018", "the prompt's examples are in no question", r"\(blood_type, dentist_name, number_of_siblings\)", f["examples_unused"],
               note=f"{', '.join(EXAMPLE_WORDS)} in none of the list's questions or answers"),
-        Claim("0018", "F", r"counts at most F = ([\d,]+) tokens", (FACT_TOKENS,)),
+        Claim("0018", "F", r"counts at most F = ([\d,]+) tokens", (FACT_TOKENS,), note="memory.FACT_TOKENS"),
         Claim("0018", "rejected: the model names what is replaced",
               r"It did so (\d+) times in (\d+) sessions, and no question's new value replaced its old one",
               (two["replaced"], two["sessions"]) if two["evidence_to_evidence"] == 0 else ("differs",),

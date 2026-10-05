@@ -33,6 +33,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, Protocol
 
+from life_agent.agent.fact_store import Fact, FactStore, InProcessFactStore, normalise
+
 # The window the baseline keeps, in user+assistant pairs.  Unchanged from the
 # constant the conversation loop used to hold.
 DEFAULT_HISTORY_TURNS = 10
@@ -86,6 +88,43 @@ CONSOLIDATION_REASK_MESSAGE = (
     "{notes}"
 )
 
+# The fact graph's F, in tokens (ADR 0018): the most the facts message may
+# count, the message as a whole and not the sum of its lines.
+FACT_TOKENS = 1000
+
+# An extraction call that fails is tried this many times in all, as a
+# consolidation call is (ADR 0016, 0018).
+EXTRACTION_ATTEMPTS = 3
+
+# ADR 0018, copied from the record's code block: round three of the spike,
+# word for word.  Fixed before the strategy's first run, and here rather than
+# in prompts.py for the consolidator's reasons: it is the memory strategy's,
+# it runs outside the turn, one JSON object comes back and nothing dispatches
+# on it.
+EXTRACTION_SYSTEM_PROMPT = (
+    "You keep the assistant's memory of facts about the user. You are given the\n"
+    "facts so far and the transcript of one more conversation between the user\n"
+    "and the assistant, every turn numbered in brackets. List what the user says\n"
+    "in this conversation about themselves and about the people, places and\n"
+    "things in their life: what they have, like, do, plan and have done, with the\n"
+    "names, numbers, dates and places. Leave out general knowledge, the\n"
+    "assistant's advice, and what the user only asks about.\n"
+    'Each fact is one triple with the turn it comes from. subject: "user", or the\n'
+    "name of the person or thing the fact is about. relation: what is said about\n"
+    "the subject, as a short name in English, lower_snake_case (blood_type,\n"
+    "dentist_name, number_of_siblings). value: the value, as short as the\n"
+    "conversation allows, in the language of the conversation. turn: the number\n"
+    "of the turn.\n"
+    "A fact with the subject and relation of a fact so far replaces it. So when\n"
+    "the user gives a newer value for one of the facts so far, use exactly its\n"
+    "subject and relation; and give a fact about another person, thing or\n"
+    "occasion a relation of its own, one that says which: a second allergy is not\n"
+    "a newer value for the first. When the conversation gives two values for the\n"
+    "same thing, give only the current one. Reply with a JSON object:\n"
+    '{"facts": [{"subject": "...", "relation": "...", "value": "...", "turn": 0}]}.\n'
+    'With nothing to list, reply {"facts": []}.'
+)
+
 # A sentence end, after which a cut may fall (ADR 0017).
 _SENTENCE_END = re.compile(r"[.!?]|\n")
 
@@ -112,6 +151,15 @@ def make_summary_id(session_id: str) -> str:
     starts with a word no session is named.
     """
     return f"summary:{session_id}"
+
+
+def make_fact_id(session_id: str, n: int) -> str:
+    """Build the id of the *n*-th fact stored from *session_id* (ADR 0018).
+
+    Deterministic for the same reason as :func:`make_record_id`, and shaped
+    like :func:`make_summary_id` so that it collides with neither.
+    """
+    return f"fact:{session_id}:{n}"
 
 
 @dataclass(frozen=True)
@@ -287,6 +335,32 @@ def _terms(text: str) -> list[str]:
     return _TERM.findall(text.casefold())
 
 
+def _bm25(query: str, term_counts: dict[int, Counter[str]]) -> dict[int, float]:
+    """BM25 of every document against *query* (ADR 0011), by the keys of *term_counts*.
+
+    The statistics, how rare a term is and how long an average document is,
+    come from the documents given and from no others.
+    """
+    scores = dict.fromkeys(term_counts, 0.0)
+    if not term_counts:
+        return scores
+    lengths = {i: sum(counts.values()) for i, counts in term_counts.items()}
+    average = sum(lengths.values()) / len(term_counts)
+    # Sorted, so the floats are summed in one order whatever the hash seed.
+    for term in sorted(set(_terms(query))):
+        holders = [i for i, counts in term_counts.items() if term in counts]
+        if not holders:
+            continue
+        idf = math.log(
+            1 + (len(term_counts) - len(holders) + 0.5) / (len(holders) + 0.5)
+        )
+        for i in holders:
+            tf = term_counts[i][term]
+            norm = 1 - BM25_B + BM25_B * lengths[i] / average
+            scores[i] += idf * tf * (BM25_K1 + 1) / (tf + BM25_K1 * norm)
+    return scores
+
+
 class RetrievalMemory:
     """Recall by relevance to the query, over everything ever written.
 
@@ -364,24 +438,7 @@ class RetrievalMemory:
 
     def _scores(self, query: str, visible: list[int]) -> dict[int, float]:
         """BM25 of every visible record against *query*, by record position."""
-        scores = dict.fromkeys(visible, 0.0)
-        if not visible:
-            return scores
-        lengths = {i: sum(self._term_counts[i].values()) for i in visible}
-        average = sum(lengths.values()) / len(visible)
-        # Sorted, so the floats are summed in one order whatever the hash seed.
-        for term in sorted(set(_terms(query))):
-            holders = [i for i in visible if term in self._term_counts[i]]
-            if not holders:
-                continue
-            idf = math.log(
-                1 + (len(visible) - len(holders) + 0.5) / (len(holders) + 0.5)
-            )
-            for i in holders:
-                tf = self._term_counts[i][term]
-                norm = 1 - BM25_B + BM25_B * lengths[i] / average
-                scores[i] += idf * tf * (BM25_K1 + 1) / (tf + BM25_K1 * norm)
-        return scores
+        return _bm25(query, {i: self._term_counts[i] for i in visible})
 
 
 class Consolidator(Protocol):
@@ -601,4 +658,303 @@ class ConsolidatingMemory:
             reply = self._llm.chat_json(CONSOLIDATION_SYSTEM_PROMPT, messages)
             if reply is not None and isinstance(reply.get("summary"), str) and reply["summary"].strip():
                 return reply["summary"]
+        return None
+
+
+def extraction_message(held: list[Fact], turns: list[MemoryRecord]) -> str:
+    """The user message of an extraction call, as ADR 0018 states it.
+
+    The facts that hold come first, oldest first, for the model to reuse their
+    names.  The session follows as quoted transcript, as the consolidator gets
+    it, with every turn numbered so that a fact can name the turn it comes from.
+    """
+    facts = "\n".join(fact.line for fact in held)
+    transcript = "\n\n".join(f"[{n}] {r.role}: {r.content}" for n, r in enumerate(turns))
+    return f"Facts so far:\n{facts or '(none)'}\n\nConversation:\n{transcript}"
+
+
+def _well_formed(entries: list, turns: int) -> tuple[list[tuple[str, str, str, int]], int]:
+    """The entries of a reply that are facts (ADR 0018), and how many were dropped.
+
+    An entry is a fact when its subject, relation and value are non-empty
+    strings and its turn is the number of a turn in the call.
+    """
+    kept: list[tuple[str, str, str, int]] = []
+    dropped = 0
+    for entry in entries:
+        fact = entry if isinstance(entry, dict) else {}
+        value = fact.get("value")
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            value = str(value)  # a count sent as a number is still a value
+        texts = (fact.get("subject"), fact.get("relation"), value)
+        turn = fact.get("turn")
+        if not (
+            all(isinstance(t, str) and t.strip() for t in texts)
+            and isinstance(turn, int)
+            and not isinstance(turn, bool)
+            and 0 <= turn < turns
+        ):
+            dropped += 1
+            continue
+        subject, relation, value = (t.strip() for t in texts)
+        kept.append((subject, relation, value, turn))
+    return kept, dropped
+
+
+def _name(subject: str, relation: str) -> tuple[str, str]:
+    """What a fact is replaced on (ADR 0018): its subject and relation, case and spacing aside."""
+    return normalise(subject), normalise(relation)
+
+
+@dataclass(frozen=True)
+class Extraction:
+    """What one :meth:`FactGraphMemory.end_session` did, for the evaluation's row.
+
+    ``said_again`` counts the facts not stored because a fact that held, or an
+    earlier one of the same reply, already said them; ``dropped`` the entries
+    that were not facts.  ``failed`` means the session was skipped: every
+    attempt failed, nothing was stored and nothing was replaced.
+    """
+
+    session_id: str
+    stored: int = 0
+    said_again: int = 0
+    dropped: int = 0
+    replaced: int = 0
+    failed: bool = False
+
+
+class FactGraphMemory:
+    """Timestamped facts, replaced on the name, over a recent window.
+
+    After every session one call lists what the user said about themselves as
+    (subject, relation, value) triples.  Each is stored once, with the time it
+    was extracted, and a newer fact with the subject and relation of an older
+    one replaces it.  Where :class:`ConsolidatingMemory` rewrites one text held
+    to S tokens, this store is held to no size, and the facts shown are chosen
+    for each question.  What it pays is a model call per session, and a rule
+    that replaces on the name alone: two unrelated facts under one general name
+    replace each other too.
+
+    Its rules are decided in ADR 0018, with 0013 and 0014, and must not drift:
+
+    * **Extraction happens in** :meth:`end_session` **and nowhere else.**  One
+      call reads the facts that hold and the session's ``kind="message"``
+      records as quoted transcript.  An ``outcome`` never enters the call and
+      is never paraphrased.  Raw records are kept, in the process.
+    * **The code replaces, not the model.**  A fact replaces every fact from
+      an earlier session that holds and has its subject and relation, case and
+      spacing aside.  Two facts of one session never replace each other.
+    * **A fact said again is not stored.**  The older one stands, with its
+      time and where it came from, and no fact of that session replaces it.
+    * **A replaced fact is kept**, marked with the fact that replaced it and
+      with that fact's time, so what held at an earlier time can be asked for.
+      It is never shown once replaced, marked or unmarked.
+    * **The clock is the latest** ``at`` **seen in** :meth:`write` (ADR 0014).
+      A fact is stamped with it when it is extracted, never with the time of
+      its turn.
+    * **Recall is the facts message first, then the window.**  The facts that
+      hold at the cutoff are ranked against the query with ADR 0011's BM25,
+      each on its line and the turn the model named for it.  Those that fit in
+      F tokens are shown as one assistant message, a line each, in the order
+      they were stored.  The raw records that fit in the rest of the budget
+      follow, filled as the baseline fills.  Without a fact to show the
+      strategy returns what the baseline would.
+    * **A session the model cannot handle is skipped** (ADR 0016), never
+      fatal, and the skip is recorded in :attr:`extractions`.  A store that
+      fails is the machine's failure, and is raised.
+    * **Each fact is a** ``kind="summary"`` **record** whose ``derived_from``
+      is every message its extraction read, so "evidence consolidated" means
+      what ADR 0013 says: the call read it.
+    * **The facts live in a store of their own**, behind
+      :class:`~life_agent.agent.fact_store.FactStore`: Neo4j in a measured
+      run, a list in the process for the tests and the dry run.
+    """
+
+    def __init__(
+        self,
+        llm: Consolidator,
+        *,
+        store: FactStore | None = None,
+        token_counter: TokenCounter | None = None,
+    ) -> None:
+        self._llm = llm
+        self._store = store if store is not None else InProcessFactStore()
+        self._counter = token_counter or ApproxTokenCounter()
+        # The raw records, in the order they arrived, and their text by id.
+        self._records: list[MemoryRecord] = []
+        self._content: dict[str, str] = {}
+        # The messages written since the last extraction.
+        self._pending: list[MemoryRecord] = []
+        # By session, the ids of the messages its extraction read.
+        self._read: dict[str, tuple[str, ...]] = {}
+        self._clock: datetime | None = None
+        self._extractions: list[Extraction] = []
+
+    @property
+    def records(self) -> list[MemoryRecord]:
+        """The raw records, oldest first, then every fact as a record, in the order stored.  For tests and the eval."""
+        return list(self._records) + [self._as_record(fact) for fact in self._store.facts()]
+
+    @property
+    def facts(self) -> list[Fact]:
+        """Every fact stored, replaced ones included, in the order stored.  For tests and the eval."""
+        return self._store.facts()
+
+    @property
+    def extractions(self) -> list[Extraction]:
+        """One entry per session extracted or skipped, in order."""
+        return list(self._extractions)
+
+    def write(self, record: MemoryRecord) -> None:
+        self._records.append(record)
+        self._content[record.id] = record.content
+        if self._clock is None or record.at > self._clock:
+            self._clock = record.at
+        if record.kind == "message":
+            self._pending.append(record)
+
+    def retrieve(
+        self, query: str, *, at: datetime, budget_tokens: int
+    ) -> Retrieval:
+        held = self._store.held(at)
+        # Walking down the ranking, a fact is taken if the message with its
+        # line added still counts at most F, and passed over if not.  The
+        # message never takes more than the budget either.
+        limit = min(FACT_TOKENS, budget_tokens)
+        taken: list[int] = []
+        text = ""
+        for i in self._ranked(query, held):
+            trial = sorted(taken + [i])
+            trial_text = "\n".join(held[j].line for j in trial)
+            if self._counter.count(trial_text) <= limit:
+                taken, text = trial, trial_text
+        used = self._counter.count(text) if taken else 0
+
+        # The baseline's fill (ADR 0007), into what the facts left, as
+        # ConsolidatingMemory fills beside its summary.
+        window: list[MemoryRecord] = []
+        for record in reversed([r for r in self._records if r.at <= at]):
+            cost = self._counter.count(record.content)
+            if (taken or window) and used + cost > budget_tokens:
+                break
+            used += cost
+            window.append(record)
+        window.reverse()
+
+        facts_message = [{"role": "assistant", "content": text}] if taken else []
+        return Retrieval(
+            messages=facts_message + [r.as_message() for r in window],
+            sources=tuple(held[i].id for i in taken) + tuple(r.id for r in window),
+            tokens_used=used,
+        )
+
+    def ranking(self, query: str, *, at: datetime) -> list[Fact]:
+        """The facts that hold at *at*, best match for *query* first.  For tests and the eval.
+
+        A fact that shares no term with *query* is left out, as it is never shown.
+        """
+        held = self._store.held(at)
+        return [held[i] for i in self._ranked(query, held)]
+
+    def end_session(self) -> None:
+        """Extract the facts of the session that just ended, and replace what they replace.
+
+        Nothing happens when no message was written since the last time.  If
+        every attempt fails the session is skipped: no fact is stored, nothing
+        is replaced, the turns stay as raw records, and the skip is recorded
+        in :attr:`extractions`.
+        """
+        if not self._pending:
+            return None
+        turns = self._pending
+        session_id = turns[-1].session_id
+        if session_id in self._read:
+            raise ValueError(f"the facts of session {session_id!r} are already extracted")
+        assert self._clock is not None  # a pending record has set it
+
+        held = self._store.held(self._clock)
+        entries = self._ask(extraction_message(held, turns))
+        self._pending = []
+        if entries is None:
+            self._extractions.append(Extraction(session_id, failed=True))
+            return None
+
+        triples, dropped = _well_formed(entries, len(turns))
+        # 1. A fact that holds, or an earlier one of this reply, said again:
+        #    not stored, and the older fact is not replaced by this session.
+        held_ids: dict[tuple[str, str, str], list[str]] = {}
+        for fact in held:
+            held_ids.setdefault((*_name(fact.subject, fact.relation), normalise(fact.value)), []).append(fact.id)
+        new: list[Fact] = []
+        seen: set[tuple[str, str, str]] = set()
+        confirmed: set[str] = set()
+        said_again = 0
+        for subject, relation, value, turn in triples:
+            triple = (*_name(subject, relation), normalise(value))
+            if triple in held_ids or triple in seen:
+                confirmed.update(held_ids.get(triple, ()))
+                said_again += 1
+                continue
+            seen.add(triple)
+            new.append(
+                Fact(
+                    id=make_fact_id(session_id, len(new)),
+                    subject=subject,
+                    relation=relation,
+                    value=value,
+                    session_id=session_id,
+                    turn=turn,
+                    turn_id=turns[turn].id,
+                    at=self._clock,
+                )
+            )
+        # 2. Every other fact is stored, and replaces what held under its
+        #    name.  Every fact that held is from an earlier session; where two
+        #    facts of this one share a name, an old fact is marked with the
+        #    first of them in the reply.
+        replaced: dict[str, str] = {}
+        for fact in new:
+            for old in held:
+                if old.id not in confirmed and _name(old.subject, old.relation) == _name(fact.subject, fact.relation):
+                    replaced.setdefault(old.id, fact.id)
+
+        self._store.add(new, replaced)
+        self._read[session_id] = tuple(r.id for r in turns)
+        self._extractions.append(
+            Extraction(session_id, stored=len(new), said_again=said_again, dropped=dropped, replaced=len(replaced))
+        )
+        return None
+
+    def _ranked(self, query: str, held: list[Fact]) -> list[int]:
+        """Positions in *held* by BM25 against *query*, best first; between equal scores, the fact stored later.
+
+        A fact is ranked on its line followed by the text of the turn the
+        model named for it, and the statistics come from those texts alone.
+        """
+        term_counts = {
+            i: Counter(_terms(f"{fact.line} {self._content.get(fact.turn_id, '')}"))
+            for i, fact in enumerate(held)
+        }
+        scores = _bm25(query, term_counts)
+        return sorted((i for i in scores if scores[i] > 0), key=lambda i: (-scores[i], -i))
+
+    def _as_record(self, fact: Fact) -> MemoryRecord:
+        return MemoryRecord(
+            id=fact.id,
+            role="assistant",
+            content=fact.line,
+            kind="summary",
+            at=fact.at,
+            session_id=fact.session_id,
+            derived_from=self._read.get(fact.session_id, ()),
+        )
+
+    def _ask(self, message: str) -> list | None:
+        """One extraction call, tried up to EXTRACTION_ATTEMPTS times; the reply's entries, or None when all failed."""
+        messages = [{"role": "user", "content": message}]
+        for _ in range(EXTRACTION_ATTEMPTS):
+            reply = self._llm.chat_json(EXTRACTION_SYSTEM_PROMPT, messages)
+            if reply is not None and isinstance(reply.get("facts"), list):
+                return reply["facts"]
         return None

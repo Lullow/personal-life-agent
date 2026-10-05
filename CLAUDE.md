@@ -45,6 +45,11 @@ pip install -e '.[eval]'
 .venv/bin/python evals/longmemeval.py --dry-run     # offline: replay, recall, token counts
 .venv/bin/python evals/longmemeval.py               # 10 per type; calls the model, costs money
 .venv/bin/python evals/longmemeval.py --strategy retrieval --dry-run   # RetrievalMemory, offline
+.venv/bin/python evals/longmemeval.py --strategy fact-graph --dry-run  # FactGraphMemory, offline, facts in the process
+# A run of fact-graph also needs the graph extra, the Neo4j container and
+# LIFE_AGENT_NEO4J_PASSWORD in .env (ADR 0018; the command is in
+# evals/spike_fact_graph.py).
+pip install -e '.[graph]'
 .venv/bin/python evals/verify_adr_numbers.py        # recompute every figure in ADRs 0004–0009
 .venv/bin/python evals/verify_adr_0011.py           # the same for ADR 0011
 .venv/bin/python evals/verify_adr_0015.py           # the same for ADRs 0015–0017
@@ -99,10 +104,11 @@ inclusive day bounds (`start`/`end`, or `due_from`/`due_to` for tasks).
 
 The memory layer is not an exception to this rule. It must persist natural
 language to its own store, which is not the database the rule protects. Memory
-has no write path to domain tables and is read-only into the prompt. No
-strategy persists anything yet — `RecentTurnsMemory` keeps its records in a
-list in the process — and persistence comes in step 4 (`docs/vg-project.md`).
-See "Memory layer" below.
+has no write path to domain tables and is read-only into the prompt. One
+strategy persists: in a measured run `FactGraphMemory` keeps its facts in
+Neo4j, a store of its own (ADR 0018). The agent's default, `RecentTurnsMemory`,
+keeps its records in a list in the process, and persistence for the agent
+comes in step 4 (`docs/vg-project.md`). See "Memory layer" below.
 
 Enforced in code, not convention, at three independent layers:
 
@@ -226,7 +232,9 @@ class ConversationMemory(Protocol):
     def end_session(self) -> None: ...
 ```
 
-Three implementations, in this order, all built (`docs/vg-project.md`).
+Four implementations, in this order, all built (`docs/vg-project.md`). The
+first three are the comparison. The fourth stands outside it: ADR 0019 has it
+measured as a pilot on 20 questions, in a table of its own.
 
 1. `RecentTurnsMemory` — **built.** The last N turns, windowed at retrieve. The
    agent's default, and the baseline.
@@ -245,6 +253,21 @@ Three implementations, in this order, all built (`docs/vg-project.md`).
    `memory.py`, not `prompts.py`, and is not tuned to a result. The harness builds it with a consolidator client;
    the agent cannot be switched to it yet (it does not hand its client to
    its memory).
+4. `FactGraphMemory` — **built.** One extraction call by `gpt-4o-mini` in
+   `end_session()` lists the session's facts as (subject, relation, value)
+   triples, each stamped with the strategy's clock. A fact replaces the facts
+   of earlier sessions that hold under its subject and relation, by a rule in
+   the code and not by the model; a fact said again is not stored; a replaced
+   fact is kept and marked, never deleted, so `retrieve(at=T)` can show what
+   held at an earlier time. Recall ranks the facts that hold at the cutoff
+   with ADR 0011's BM25, each on its line and the turn it names, shows those
+   that fit in F = 1000 tokens as one assistant turn, then the most recent
+   raw turns that fit. The facts live behind the `FactStore` Protocol in
+   `life_agent/agent/fact_store.py`: Neo4j in a measured run, a list in the
+   process for the tests and the dry run. Its design is fixed by ADR 0018
+   and is not tuned to a result; the rule replaces unrelated facts under
+   general names, and that is recorded, not fixed. The agent cannot be
+   switched to it yet.
 
 ### Rules that hold across all implementations
 
@@ -279,15 +302,21 @@ comparable between the things being compared.
 
 Memory persistence must write to its own store. **Never** through
 `db/repositories.py`, never to a domain table. Memory is read-only into the
-prompt and has no write path into domain data.
+prompt and has no write path into domain data. `FactGraphMemory`'s store is
+`fact_store.py`; the Neo4j driver is the optional extra `graph` and is
+imported only when a driver is asked for, so the app never loads it.
 
 Consolidation's LLM call runs outside the turn and must never be able to
 produce a tool call — the same discipline `READ_ANSWER_SYSTEM_PROMPT` already
 has. `ConsolidatingMemory` keeps that discipline: one JSON string back, and
-nothing dispatches on it.
+nothing dispatches on it. `FactGraphMemory`'s extraction keeps it too: one
+JSON list of facts back, and the code decides what they replace.
 
 Tests are offline (`tests/conftest.py` neutralises `.env`). Any embedding-based
-retrieval needs a deterministic fake embedder behind the same Protocol.
+retrieval needs a deterministic fake embedder behind the same Protocol. The
+fact store's contract tests (`tests/test_fact_store.py`) also run against
+Neo4j, but only when `LIFE_AGENT_NEO4J_PASSWORD` is set in the real
+environment; otherwise that half is skipped.
 
 Cost must be measured **on the LLM client**, not inside the memory module. A
 strategy that retrieves more context makes the answer call more expensive, and
@@ -310,4 +339,4 @@ drive the memory module through a thin harness, not through
 `ConversationAgent.send()`, and the agent must never appear in the measured
 path. It reads its questions from `evals/longmemeval_questions.json` and its
 replay rules from `evals/verify_adr_numbers.py`; ADRs 0004–0009, 0011 and
-0013–0017 are its specification.
+0013–0019 are its specification.

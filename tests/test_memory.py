@@ -6,9 +6,12 @@ harness the next two implementations plug into, and a strategy that cannot pass
 it is not finished.  The rest test one strategy each:
 :class:`RecentTurnsMemory`, including the window behaviour the conversation
 loop used to implement itself, :class:`RetrievalMemory`, whose rules are
-those of ADR 0011, and :class:`ConsolidatingMemory`, whose rules are those of
-ADRs 0012 to 0014.  The consolidator is a fake that replies with a scripted
-summary and keeps every call, so a test can read what it was shown.
+those of ADR 0011, :class:`ConsolidatingMemory`, whose rules are those of
+ADRs 0012 to 0014, and :class:`FactGraphMemory`, whose rules are those of ADR
+0018.  The consolidator is a fake that replies with a scripted summary and
+keeps every call, so a test can read what it was shown; the fact graph's
+extraction model is a fake of the same kind, and its facts are kept in the
+process.
 """
 
 import inspect
@@ -17,16 +20,22 @@ from datetime import datetime, timedelta
 import pytest
 
 import life_agent.agent.memory as memory_module
+from life_agent.agent.fact_store import FactStoreError, InProcessFactStore
 from life_agent.agent.memory import (
     CONSOLIDATION_ATTEMPTS,
     CONSOLIDATION_SYSTEM_PROMPT,
+    EXTRACTION_ATTEMPTS,
+    EXTRACTION_SYSTEM_PROMPT,
+    FACT_TOKENS,
     SUMMARY_TARGET_TOKENS,
     ApproxTokenCounter,
     ConsolidatingMemory,
+    FactGraphMemory,
     MemoryRecord,
     RecentTurnsMemory,
     RetrievalMemory,
     keep_last_tokens,
+    make_fact_id,
     make_record_id,
     make_summary_id,
 )
@@ -49,6 +58,20 @@ class FakeConsolidator:
         return {"summary": f"notes after {len(self.calls)} call(s)"}
 
 
+class FakeExtractor:
+    """Replies with the scripted *replies* in turn, then with no facts."""
+
+    def __init__(self, *replies):
+        self.replies = list(replies)
+        self.calls = []
+
+    def chat_json(self, system_prompt, messages):
+        self.calls.append((system_prompt, messages))
+        if self.replies:
+            return self.replies.pop(0)
+        return {"facts": []}
+
+
 class CharCounter:
     def count(self, text: str) -> int:
         return len(text)
@@ -63,6 +86,7 @@ STRATEGIES = [
     pytest.param(lambda: RecentTurnsMemory(max_turns=None), id="recent-turns-no-window"),
     pytest.param(lambda: RetrievalMemory(), id="retrieval"),
     pytest.param(lambda: ConsolidatingMemory(FakeConsolidator()), id="consolidating"),
+    pytest.param(lambda: FactGraphMemory(FakeExtractor()), id="fact-graph"),
 ]
 
 
@@ -789,6 +813,549 @@ class TestConsolidatingMemory:
 
     def test_s_is_a_thousand_tokens(self):
         assert SUMMARY_TARGET_TOKENS == 1000
+
+
+# ---------------------------------------------------------------------------
+# FactGraphMemory — ADR 0018, with 0013 (derived_from) and 0014 (clock)
+# ---------------------------------------------------------------------------
+
+MAY = datetime(2026, 5, 1, 9, 0, 0)
+JUNE = datetime(2026, 6, 1, 9, 0, 0)
+JULY = datetime(2026, 7, 1, 9, 0, 0)
+
+
+def fact_graph(*replies, counter=None, store=None):
+    llm = FakeExtractor(*replies)
+    return FactGraphMemory(llm, store=store, token_counter=counter), llm
+
+
+def facts(*triples):
+    """A reply: each triple is (relation, value) or (relation, value, turn), about the user."""
+    return {"facts": [
+        {"subject": "user", "relation": t[0], "value": t[1], "turn": t[2] if len(t) > 2 else 0}
+        for t in triples
+    ]}
+
+
+def session(memory, session_id, *contents, at=NOW):
+    """Write one session, user and assistant in turn, and end it."""
+    for i, content in enumerate(contents):
+        memory.write(record(i, content, role="user" if i % 2 == 0 else "assistant", at=at, session_id=session_id))
+    memory.end_session()
+
+
+def lines(memory, *, held_at=None):
+    return [f.line for f in memory.facts if held_at is None or f.holds(held_at)]
+
+
+class TestFactGraphMemory:
+    # -- what the presentation shows --
+
+    def test_what_held_before_a_replacement_can_still_be_asked_for(self):
+        memory, _ = fact_graph(facts(("car", "Honda")), facts(("car", "Tesla")))
+        session(memory, "may", "I drive a Honda", at=MAY)
+        session(memory, "june", "I traded my car for a Tesla", at=JUNE)
+        question = "What car do I drive?"
+
+        in_may = memory.retrieve(question, at=MAY + timedelta(days=14), budget_tokens=1000)
+        in_june = memory.retrieve(question, at=JUNE + timedelta(days=14), budget_tokens=1000)
+
+        # Before the replacement the old value holds, after it the new one,
+        # and neither time shows both.
+        assert shown(in_may)[0] == "user / car = Honda"
+        assert shown(in_june)[0] == "user / car = Tesla"
+        # The old fact was marked, not deleted.
+        old, new = memory.facts
+        assert (old.value, old.replaced_by, old.replaced_at) == ("Honda", new.id, JUNE)
+        assert (new.value, new.replaced_by) == ("Tesla", None)
+
+    # -- extraction (0018) --
+
+    def test_end_session_stores_each_fact_as_a_record(self):
+        memory, llm = fact_graph(facts(("running_day", "Tuesday"), ("dog_name", "Miso", 1)))
+        memory.write(record(0, "I run on Tuesdays"))
+        memory.write(record(1, "And my dog is called Miso"))
+
+        memory.end_session()
+
+        first, second = [r for r in memory.records if r.kind == "summary"]
+        assert (first.id, second.id) == (make_fact_id("s1", 0), make_fact_id("s1", 1))
+        assert first.role == "assistant"
+        assert first.content == "user / running_day = Tuesday"
+        assert first.session_id == "s1"
+        # 0013: every message the call read, not only the turn the model named.
+        assert first.derived_from == second.derived_from == (make_record_id("s1", 0), make_record_id("s1", 1))
+        assert [f.turn_id for f in memory.facts] == [make_record_id("s1", 0), make_record_id("s1", 1)]
+        assert len(llm.calls) == 1
+
+    def test_the_call_shows_the_facts_that_hold_and_the_numbered_transcript(self):
+        memory, llm = fact_graph(facts(("running_day", "Tuesday"), ("dog_name", "Miso")), facts(("running_day", "Friday")))
+        session(memory, "s1", "I run on Tuesdays", "Noted.")
+        session(memory, "s2", "Now I run on Fridays", "OK.")
+        session(memory, "s3", "hej")
+
+        first, second, third = llm.calls
+        assert first[0] == EXTRACTION_SYSTEM_PROMPT
+        # One user message: the session is quoted data, not turns to continue.
+        assert first[1] == [{
+            "role": "user",
+            "content": "Facts so far:\n(none)\n\nConversation:\n"
+                       "[0] user: I run on Tuesdays\n\n[1] assistant: Noted.",
+        }]
+        assert second[1][0]["content"] == (
+            "Facts so far:\nuser / running_day = Tuesday\nuser / dog_name = Miso\n\nConversation:\n"
+            "[0] user: Now I run on Fridays\n\n[1] assistant: OK."
+        )
+        # A replaced fact is no longer shown to the call; the rest stay oldest first.
+        assert third[1][0]["content"].startswith(
+            "Facts so far:\nuser / dog_name = Miso\nuser / running_day = Friday\n\n"
+        )
+
+    def test_write_never_extracts(self):
+        memory, llm = fact_graph()
+        for i in range(50):
+            memory.write(record(i, f"message {i}"))
+
+        assert llm.calls == []
+        assert memory.facts == []
+
+    def test_nothing_happens_on_a_session_without_messages(self):
+        memory, llm = fact_graph()
+        memory.end_session()
+        memory.write(record(0, "hej"))
+        memory.end_session()
+        memory.end_session()
+        memory.write(record(1, "Saved 1 item(s)", role="assistant", kind="outcome"))
+        memory.end_session()
+
+        assert len(llm.calls) == 1
+
+    def test_a_second_extraction_for_the_same_session_is_refused(self):
+        memory, _ = fact_graph()
+        memory.write(record(0, "one"))
+        memory.end_session()
+        memory.write(record(1, "two"))
+
+        with pytest.raises(ValueError):
+            memory.end_session()
+
+    def test_an_outcome_never_enters_the_call_and_stays_verbatim(self):
+        memory, llm = fact_graph(facts(("plan", "train tomorrow")))
+        memory.write(record(0, "jag ska träna imorgon"))
+        memory.write(record(1, "Saved 4 item(s)", role="assistant", kind="outcome"))
+        memory.end_session()
+
+        (_, messages), = llm.calls
+        assert "Saved 4 item(s)" not in messages[0]["content"]
+        assert memory.records[-1].derived_from == (make_record_id("s1", 0),)
+        assert "Saved 4 item(s)" in shown(memory.retrieve("saved", at=NOW, budget_tokens=1000))
+
+    def test_the_turn_a_fact_names_is_counted_among_the_messages_only(self):
+        memory, _ = fact_graph(facts(("plan", "train tomorrow", 1)))
+        memory.write(record(0, "hej"))
+        memory.write(record(1, "Saved 4 item(s)", role="assistant", kind="outcome"))
+        memory.write(record(2, "jag ska träna imorgon"))
+        memory.end_session()
+
+        # The call numbered two turns, and its turn 1 is the record s1:2.
+        (fact,) = memory.facts
+        assert (fact.turn, fact.turn_id) == (1, make_record_id("s1", 2))
+
+    def test_an_entry_that_is_not_a_fact_is_dropped_and_counted(self):
+        reply = {"facts": [
+            {"subject": "user", "relation": "siblings", "value": 2, "turn": 0},
+            {"subject": "user", "relation": "  city ", "value": " Lund ", "turn": 0},
+            {"subject": "user", "relation": "", "value": "x", "turn": 0},
+            {"subject": "user", "relation": "likes", "value": True, "turn": 0},
+            {"subject": "user", "relation": "car", "value": "Honda", "turn": 7},
+            {"subject": "user", "relation": "car", "value": "Honda", "turn": "0"},
+            {"subject": "user", "relation": "car", "value": "Honda"},
+            "user / car = Honda",
+        ]}
+        memory, _ = fact_graph(reply)
+        session(memory, "s1", "hej")
+
+        # A value sent as a number is taken as its text; names are stripped.
+        assert lines(memory) == ["user / siblings = 2", "user / city = Lund"]
+        (e,) = memory.extractions
+        assert (e.stored, e.dropped) == (2, 6)
+
+    # -- the replacement rule (0018) --
+
+    def test_a_newer_fact_replaces_on_subject_and_relation_case_and_spacing_aside(self):
+        memory, _ = fact_graph(
+            facts(("wake_up time", "8:30")),
+            {"facts": [{"subject": " User", "relation": "Wake_Up   Time", "value": "7:30", "turn": 0}]},
+        )
+        session(memory, "s1", "I get up at 8:30", at=MAY)
+        session(memory, "s2", "I get up at 7:30 now", at=JUNE)
+
+        assert lines(memory, held_at=JUNE) == ["User / Wake_Up   Time = 7:30"]
+        assert [e.replaced for e in memory.extractions] == [0, 1]
+
+    def test_another_relation_replaces_nothing(self):
+        memory, _ = fact_graph(facts(("recent_5k_time", "27:12")), facts(("personal_best_time", "25:50")))
+        session(memory, "s1", "I ran 5k in 27:12", at=MAY)
+        session(memory, "s2", "My new best is 25:50", at=JUNE)
+
+        # What the rule is expected to miss: the old value and the new one both hold.
+        assert lines(memory, held_at=JUNE) == ["user / recent_5k_time = 27:12", "user / personal_best_time = 25:50"]
+
+    def test_another_subject_replaces_nothing(self):
+        memory, _ = fact_graph(
+            facts(("car", "Honda")),
+            {"facts": [{"subject": "Anna", "relation": "car", "value": "Tesla", "turn": 0}]},
+        )
+        session(memory, "s1", "I drive a Honda", at=MAY)
+        session(memory, "s2", "Anna drives a Tesla", at=JUNE)
+
+        assert lines(memory, held_at=JUNE) == ["user / car = Honda", "Anna / car = Tesla"]
+
+    def test_two_facts_of_one_session_never_replace_each_other(self):
+        memory, _ = fact_graph(facts(("pet", "dog"), ("pet", "cat")), facts(("pet", "parrot")))
+        session(memory, "s1", "I have a dog and a cat", at=MAY)
+
+        assert lines(memory, held_at=MAY) == ["user / pet = dog", "user / pet = cat"]
+
+        session(memory, "s2", "Now I have a parrot", at=JUNE)
+
+        # A later session's fact replaces every fact that held under the name.
+        assert lines(memory, held_at=JUNE) == ["user / pet = parrot"]
+        assert [f.replaced_by for f in memory.facts] == [make_fact_id("s2", 0), make_fact_id("s2", 0), None]
+
+    def test_a_fact_said_again_is_not_stored_and_the_older_one_stands(self):
+        memory, _ = fact_graph(facts(("pet", "dog")), facts(("PET", " Dog")))
+        session(memory, "s1", "I have a dog", at=MAY)
+        session(memory, "s2", "My dog is asleep", at=JUNE)
+
+        (fact,) = memory.facts
+        assert (fact.id, fact.at, fact.replaced_by) == (make_fact_id("s1", 0), MAY, None)
+        assert [e.said_again for e in memory.extractions] == [0, 1]
+
+    def test_a_fact_said_again_is_not_replaced_by_its_own_session(self):
+        said_again_first = facts(("pet", "dog"), ("pet", "cat"))
+        said_again_last = facts(("pet", "cat"), ("pet", "dog"))
+
+        for reply in (said_again_first, said_again_last):
+            memory, _ = fact_graph(facts(("pet", "dog")), reply)
+            session(memory, "s1", "I have a dog", at=MAY)
+            session(memory, "s2", "I still have the dog, and a cat now", at=JUNE)
+
+            # Whatever the order of the reply: the dog stands and the cat is new.
+            assert lines(memory, held_at=JUNE) == ["user / pet = dog", "user / pet = cat"]
+
+    def test_a_fact_twice_in_one_reply_is_stored_once(self):
+        memory, _ = fact_graph(facts(("pet", "dog"), ("pet", "Dog"), ("city", "Lund")))
+        session(memory, "s1", "I have a dog")
+
+        assert [(f.id, f.line) for f in memory.facts] == [
+            (make_fact_id("s1", 0), "user / pet = dog"),
+            (make_fact_id("s1", 1), "user / city = Lund"),
+        ]
+        assert memory.extractions[0].said_again == 1
+
+    def test_an_old_value_said_after_it_was_replaced_is_a_new_fact(self):
+        memory, _ = fact_graph(facts(("car", "Honda")), facts(("car", "Tesla")), facts(("car", "Honda")))
+        session(memory, "s1", "a Honda", at=MAY)
+        session(memory, "s2", "a Tesla", at=JUNE)
+        session(memory, "s3", "a Honda again", at=JULY)
+
+        assert [(f.value, f.replaced_by) for f in memory.facts] == [
+            ("Honda", make_fact_id("s2", 0)), ("Tesla", make_fact_id("s3", 0)), ("Honda", None),
+        ]
+
+    # -- time (0014, 0018) --
+
+    def test_a_fact_is_stamped_with_the_largest_time_seen_not_its_turns(self):
+        memory, _ = fact_graph(facts(("pet", "dog", 1)))
+        memory.write(record(0, "later", at=LATER))
+        memory.write(record(1, "I have a dog", at=NOW))
+        memory.end_session()
+
+        assert memory.facts[0].at == LATER
+
+    def test_a_fact_made_after_the_cutoff_is_invisible(self):
+        memory, _ = fact_graph(facts(("pet", "dog")))
+        memory.write(record(0, "my pet is a dog", at=NOW))
+        memory.write(record(1, "after", at=LATER))
+        memory.end_session()
+
+        at_now = memory.retrieve("pet", at=NOW, budget_tokens=1000)
+        at_later = memory.retrieve("pet", at=LATER, budget_tokens=1000)
+
+        assert shown(at_now) == ["my pet is a dog"]
+        assert shown(at_later) == ["user / pet = dog", "my pet is a dog", "after"]
+
+    def test_a_replacement_made_after_the_cutoff_has_not_happened_yet(self):
+        memory, _ = fact_graph(facts(("car", "Honda")), facts(("car", "Tesla")))
+        session(memory, "s1", "my car is a Honda", at=MAY)
+        session(memory, "s2", "my car is a Tesla now", at=JUNE)
+
+        result = memory.retrieve("car", at=MAY, budget_tokens=1000)
+
+        # Nothing stamped after May is in the context: not the new fact, not
+        # its turn, and the old fact is still shown as holding.
+        assert shown(result) == ["user / car = Honda", "my car is a Honda"]
+        assert result.sources == (make_fact_id("s1", 0), make_record_id("s1", 0))
+
+    # -- what retrieve shows (0018) --
+
+    def test_the_facts_come_first_as_one_assistant_message_then_the_window(self):
+        memory, _ = fact_graph(facts(("pet", "dog"), ("city", "Lund", 1)))
+        session(memory, "s1", "my pet is a dog", "nice")
+        memory.write(record(0, "what about my pet and my city?", session_id="s2"))
+
+        result = memory.retrieve("pet city nice", at=NOW, budget_tokens=1000)
+
+        assert result.messages == [
+            {"role": "assistant", "content": "user / pet = dog\nuser / city = Lund"},
+            {"role": "user", "content": "my pet is a dog"},
+            {"role": "assistant", "content": "nice"},
+            {"role": "user", "content": "what about my pet and my city?"},
+        ]
+        assert result.sources == (
+            make_fact_id("s1", 0),
+            make_fact_id("s1", 1),
+            make_record_id("s1", 0),
+            make_record_id("s1", 1),
+            make_record_id("s2", 0),
+        )
+
+    def test_the_facts_are_shown_in_the_order_stored_not_by_rank(self):
+        memory, _ = fact_graph(facts(("city", "Lund")), facts(("gym_price", "30")))
+        session(memory, "s1", "I live in Lund", at=MAY)
+        session(memory, "s2", "the gym price went up to 30", at=JUNE)
+
+        ranking = memory.ranking("gym price in Lund", at=JUNE)
+        result = memory.retrieve("gym price in Lund", at=JUNE, budget_tokens=1000)
+
+        # The later fact is the better match, and still comes last: order is
+        # the only thing that says which of two lines is the newer.
+        assert [f.relation for f in ranking] == ["gym_price", "city"]
+        assert shown(result)[0] == "user / city = Lund\nuser / gym_price = 30"
+
+    def test_a_fact_is_ranked_on_its_line_and_the_turn_it_names(self):
+        memory, _ = fact_graph(facts(("friend_meetup_count", "twice", 1)))
+        session(memory, "s1", "hej", "Good to hear you met Alex again")
+
+        by_turn = memory.retrieve("How many times have I met Alex?", at=NOW, budget_tokens=1000)
+        by_line = memory.retrieve("meetup", at=NOW, budget_tokens=1000)
+
+        # The line shares no word with the first question; the turn does. The
+        # turn's text is never shown as part of the fact.
+        assert shown(by_turn)[0] == "user / friend_meetup_count = twice"
+        assert shown(by_line)[0] == "user / friend_meetup_count = twice"
+
+    def test_a_fact_that_shares_no_term_with_the_query_is_never_shown(self):
+        memory, _ = fact_graph(facts(("pet", "dog")))
+        session(memory, "s1", "I have a dog")
+
+        result = memory.retrieve("saffron", at=NOW, budget_tokens=1000)
+
+        # No facts message: what the baseline would return.
+        assert shown(result) == ["I have a dog"]
+        assert result.sources == (make_record_id("s1", 0),)
+
+    def test_a_replaced_fact_is_never_shown(self):
+        memory, _ = fact_graph(facts(("car", "Honda")), facts(("car", "Tesla")))
+        session(memory, "s1", "car", at=MAY)
+        session(memory, "s2", "car", at=JUNE)
+
+        result = memory.retrieve("car Honda", at=JUNE, budget_tokens=1000)
+
+        assert shown(result)[0] == "user / car = Tesla"
+        assert make_fact_id("s1", 0) not in result.sources
+
+    def test_equal_scores_go_to_the_fact_stored_later(self):
+        memory, _ = fact_graph(facts(("a", "bike")), facts(("b", "bike")))
+        session(memory, "s1", "x", at=MAY)
+        session(memory, "s2", "x", at=JUNE)
+
+        assert [f.relation for f in memory.ranking("bike", at=JUNE)] == ["b", "a"]
+
+    def test_the_statistics_come_from_the_facts_that_hold_at_the_cutoff(self):
+        memory, _ = fact_graph(
+            facts(("a", "alpha"), ("b", "gamma", 1)),
+            facts(("c", "gamma"), ("d", "gamma"), ("e", "gamma"), ("f", "gamma")),
+        )
+        session(memory, "s1", "x", "y", at=MAY)
+        session(memory, "s2", "z", at=JUNE)
+
+        # Seen from May the two words are equally rare, so the tie goes to the
+        # later fact.  Counting June's facts would make "gamma" common and put
+        # "alpha" first.
+        assert [f.relation for f in memory.ranking("alpha gamma", at=MAY)] == ["b", "a"]
+
+    # -- the budget, in tokens (0018) --
+
+    def test_f_is_a_thousand_tokens(self):
+        assert FACT_TOKENS == 1000
+
+    def test_the_facts_message_never_counts_more_than_f(self, monkeypatch):
+        monkeypatch.setattr(memory_module, "FACT_TOKENS", 40)
+        memory, _ = fact_graph(facts(*[(f"pet_{i}", "dog") for i in range(10)]), counter=CharCounter())
+        session(memory, "s1", "dog")
+
+        result = memory.retrieve("dog", at=NOW, budget_tokens=1000)
+
+        # Each line is 18 characters and the line break one more: two fit in 40.
+        assert len(shown(result)[0]) <= 40
+        assert shown(result)[0].count("\n") == 1
+
+    def test_f_is_counted_over_the_message_as_a_whole(self, monkeypatch):
+        class PerLine:
+            """A counter under which a message costs more than its lines: 10 a line, 5 a line break."""
+
+            def count(self, text: str) -> int:
+                return 0 if not text else 10 * len(text.split("\n")) + 5 * text.count("\n")
+
+        monkeypatch.setattr(memory_module, "FACT_TOKENS", 30)
+        memory, _ = fact_graph(facts(("a", "dog"), ("b", "dog"), ("c", "dog")), counter=PerLine())
+        session(memory, "s1", "dog")
+
+        result = memory.retrieve("dog", at=NOW, budget_tokens=1000)
+
+        # Three lines are 30 as a sum and 40 as one message, so only two are shown.
+        assert shown(result)[0].count("\n") == 1
+        assert result.tokens_used == 25 + 10
+
+    def test_a_fact_too_large_is_passed_over_and_the_walk_goes_on(self, monkeypatch):
+        monkeypatch.setattr(memory_module, "FACT_TOKENS", 30)
+        memory, _ = fact_graph(facts(("pet", "dog " * 20), ("pet_name", "dog")), counter=CharCounter())
+        session(memory, "s1", "x")
+
+        result = memory.retrieve("dog", at=NOW, budget_tokens=1000)
+
+        # The long fact ranks first and does not fit; the short one is still taken.
+        assert memory.ranking("dog", at=NOW)[0].relation == "pet"
+        assert shown(result)[0] == "user / pet_name = dog"
+
+    def test_the_window_fills_what_the_facts_left(self):
+        memory, _ = fact_graph(facts(("p", "dog")), counter=CharCounter())
+        memory.write(record(0, "aaaa dog"))
+        memory.write(record(1, "bbbbbbbbbbbb"))
+        memory.write(record(2, "cccc"))
+        memory.end_session()
+
+        result = memory.retrieve("dog", at=NOW, budget_tokens=20)
+
+        # 14 for the facts message, 4 for the newest, then 12 does not fit and
+        # the walk ends there, as the baseline's does (ADR 0007).
+        assert shown(result) == ["user / p = dog", "cccc"]
+        assert result.tokens_used == 18
+
+    def test_tokens_used_is_what_the_messages_count(self):
+        memory, _ = fact_graph(facts(("pet", "dog"), ("city", "Lund")), counter=CharCounter())
+        session(memory, "s1", "my pet in the city", "nice")
+
+        result = memory.retrieve("pet city", at=NOW, budget_tokens=1000)
+
+        # The harness recounts every recall this way and refuses a difference.
+        assert result.tokens_used == sum(len(m["content"]) for m in result.messages)
+
+    def test_the_facts_never_take_more_than_the_budget(self):
+        memory, _ = fact_graph(facts(*[(f"pet_{i}", "dog") for i in range(10)]), counter=CharCounter())
+        session(memory, "s1", "dog")
+
+        result = memory.retrieve("dog", at=NOW, budget_tokens=20)
+
+        assert result.tokens_used <= 20
+
+    def test_with_facts_shown_an_oversized_record_is_not_admitted(self):
+        memory, _ = fact_graph(facts(("pet", "dog")), counter=CharCounter())
+        session(memory, "s1", "dog " * 100)
+
+        result = memory.retrieve("dog", at=NOW, budget_tokens=20)
+
+        assert shown(result) == ["user / pet = dog"]
+
+    # -- deterministic ids --
+
+    def test_ids_and_derived_from_are_the_same_in_two_replays(self):
+        def replay():
+            memory, _ = fact_graph(facts(("car", "Honda"), ("pet", "dog")), facts(("car", "Tesla")))
+            session(memory, "s1", "one", "two", at=MAY)
+            session(memory, "s2", "three", at=JUNE)
+            result = memory.retrieve("one two three car pet", at=JUNE, budget_tokens=1000)
+            return (
+                [(f.id, f.turn_id, f.replaced_by) for f in memory.facts],
+                [(r.id, r.derived_from) for r in memory.records if r.kind == "summary"],
+                result.sources,
+            )
+
+        first, second = replay(), replay()
+
+        assert first == second
+        assert first[0] == [
+            ("fact:s1:0", "s1:0", "fact:s2:0"),
+            ("fact:s1:1", "s1:0", None),
+            ("fact:s2:0", "s2:0", None),
+        ]
+
+    def test_a_fact_id_collides_with_no_other_id(self):
+        assert make_fact_id("s1", 0) not in (make_record_id("s1", 0), make_summary_id("s1"))
+
+    # -- failures (0016, 0018) --
+
+    def test_a_failed_call_is_tried_again(self):
+        memory, llm = fact_graph(None, {"notes": "x"}, facts(("pet", "dog")))
+        session(memory, "s1", "I have a dog")
+
+        # None and a reply without a list of facts are both failures.
+        assert len(llm.calls) == EXTRACTION_ATTEMPTS
+        assert lines(memory) == ["user / pet = dog"]
+        assert not memory.extractions[0].failed
+
+    def test_when_every_attempt_fails_the_session_is_skipped_and_counted(self):
+        memory, llm = fact_graph(None, {"facts": "none"}, None)
+        session(memory, "s1", "I have a dog")
+
+        # No fact, nothing lost, and the skip is on record.
+        assert len(llm.calls) == EXTRACTION_ATTEMPTS
+        assert memory.facts == []
+        assert shown(memory.retrieve("dog", at=NOW, budget_tokens=1000)) == ["I have a dog"]
+        (e,) = memory.extractions
+        assert (e.session_id, e.stored, e.failed) == ("s1", 0, True)
+
+    def test_a_skipped_session_replaces_nothing_and_is_not_carried_on(self):
+        memory, llm = fact_graph(facts(("car", "Honda")), None, None, None, facts(("city", "Lund")))
+        session(memory, "s1", "a Honda", at=MAY)
+        session(memory, "s2", "the looping session", at=JUNE)
+        session(memory, "s3", "I live in Lund", at=JUNE)
+
+        last = llm.calls[-1][1][0]["content"]
+        assert "the looping session" not in last
+        assert lines(memory, held_at=JUNE) == ["user / car = Honda", "user / city = Lund"]
+        assert memory.records[-1].derived_from == (make_record_id("s3", 0),)
+        assert [e.failed for e in memory.extractions] == [False, True, False]
+
+    def test_a_session_with_nothing_to_list_is_not_a_failure(self):
+        memory, llm = fact_graph({"facts": []})
+        session(memory, "s1", "what is the capital of France?")
+
+        assert len(llm.calls) == 1
+        (e,) = memory.extractions
+        assert (e.stored, e.failed) == (0, False)
+
+    def test_a_store_that_fails_is_raised(self):
+        class BrokenStore(InProcessFactStore):
+            def add(self, facts, replaced):
+                raise FactStoreError("the database is gone")
+
+        memory, _ = fact_graph(facts(("pet", "dog")), store=BrokenStore())
+        memory.write(record(0, "I have a dog"))
+
+        # The machine's failure, not the model's: the harness marks the
+        # question an error instead of counting a skipped session.
+        with pytest.raises(FactStoreError):
+            memory.end_session()
+
+    def test_the_facts_go_to_the_store_it_was_given(self):
+        store = InProcessFactStore()
+        memory, _ = fact_graph(facts(("pet", "dog")), store=store)
+        session(memory, "s1", "I have a dog")
+
+        assert [f.line for f in store.facts()] == ["user / pet = dog"]
 
 
 class TestKeepLastTokens:

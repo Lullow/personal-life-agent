@@ -19,6 +19,10 @@ dependencies = [
 # The LongMemEval evaluation counts tokens with tiktoken (ADR 0006). The app
 # and the tests never import it.
 eval = ["tiktoken>=0.7"]
+# FactGraphMemory keeps its facts in Neo4j in a measured run (ADR 0018). The
+# driver is imported only when one is asked for; the app and the tests never
+# load it.
+graph = ["neo4j>=6.3"]
 
 [project.scripts]
 life-agent = "life_agent.main:app"
