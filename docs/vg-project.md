@@ -127,9 +127,55 @@ each on a smoke test and each as a new record; nothing measured had to be
 measured again. The gpt-4o check that 0010 set aside was not made. The
 measurement has cost $26.90 so far, about 266 SEK at 0010's rate.
 
-**Step 7 — the report. Wednesday 7 to Friday 9 October.** No new code. The
-report is finished here, not started: each milestone has already added its
-part.
+**M4 — a fourth strategy as a pilot, and the presentation. Monday 5 to
+Friday 9 October.**
+
+Added on Sunday 4 October, the day M3 closed, when the project was compared
+with its proposal. The proposal named a strategy of timestamped facts with
+explicit overwrite, and the reply to it suggested adding a graph database or
+another complementary data storage architecture. Neither had been built. The
+examination is a 30-minute presentation with screen sharing on Friday
+9 October, so the presentation is prepared first and never waits for the
+fourth strategy.
+
+- `FactGraphMemory` is built: facts extracted from each session, kept with
+  their times in Neo4j, a newer value replacing an older one. A spike on the
+  eight histories no run measures comes first, to see what an extraction
+  gives. Then its design and its scope are recorded as ADRs 0018 and 0019,
+  before it is measured.
+- It is measured as a pilot on the 20 pilot questions and reported in a table
+  of its own, called a pilot wherever it appears. The comparison of three
+  strategies on 122 questions stays the result of the project.
+
+Three stops, each on an evening:
+
+- **Monday 5 October.** The presentation can be given from what M1 to M3
+  left: its order, the three questions it walks through and the screenshots
+  to fall back on. If not, that work goes on into Tuesday and the rest of M4
+  shrinks.
+- **Tuesday 6 October.** The class, its tests and a smoke test are done. If
+  not, no pilot is measured, and what is shown is the spike's graph as what
+  it is: built, not measured.
+- **Wednesday 7 October, hard stop.** The pilot is measured and its answers
+  are read. If not, the report says that it was not made.
+
+Cut order within M4: first the graph in the agent, below, then a run on all
+122 questions, last the pilot. The presentation of M1 to M3 and the spike's
+graph are never cut.
+
+**An exception to the scope rule, for M4 only.** The fourth strategy may be
+wired into the agent's chat, so that the presentation can show an edge being
+replaced while the audience watches. The reason is the form of the
+examination. The exception covers that wiring and nothing else. It is
+optional, it is the first thing cut, and it is given up if it is not done in
+three hours, with nothing of it committed half done. The default strategy
+stays `RecentTurnsMemory`, and the agent never appears in the measured path.
+
+**Step 7 — the presentation and a short report. Thursday 8 and Friday 9
+October.** The examination is the presentation. The report lives in the repo,
+is kept short, and says where the project departs from its proposal and why.
+No new code is written on Thursday except fixes for what is shown. The report
+is finished here, not started: each milestone has already added its part.
 
 **Step 4 — persistence, timestamps and session ids, in memory's own store.**
 After the deadline. Persistence is needed by the agent, not by the
