@@ -4,7 +4,8 @@ Reads the committed rows in evals/results/ and prints the figures the report
 quotes: accuracy, recall, precision, how often the evidence reached the
 context, what a recall held, and what a question cost, counted by the harness
 (ADR 0006) and with the framing the provider adds (ADR 0010). Every figure in
-docs/results.md must come from here.
+docs/results.md must come from here. The fourth strategy's pilot (ADR 0019) is
+printed apart, in tables of its own.
 
     .venv/bin/python evals/results_table.py            # the tables
     .venv/bin/python evals/results_table.py --check    # docs/results.md against this script
@@ -23,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from evals.estimate_cost import FRAMING_PER_CALL, FRAMING_PER_MESSAGE  # noqa: E402
 from evals.longmemeval import MODEL, PRICE_IN, PRICE_OUT, STRATEGY_LABELS, cost_of, usd  # noqa: E402
-from evals.verify_adr_numbers import KU, ROOT, SSU, TYPES, Claim, fmt, judge  # noqa: E402
+from evals.verify_adr_numbers import KU, PILOT_PER_TYPE, ROOT, SSU, TYPES, Claim, fmt, judge  # noqa: E402
 
 RESULTS = ROOT / "evals" / "results"
 DOC = ROOT / "docs" / "results.md"
@@ -35,19 +36,34 @@ RUNS = {
     "consolidating": "consolidating-20261003-233313.jsonl",
 }
 RUNS = {name: file for name, file in RUNS.items() if (RESULTS / file).exists()}
-NAMES = {"recent-turns": "RecentTurnsMemory", "retrieval": "RetrievalMemory", "consolidating": "ConsolidatingMemory"}
+# ADR 0019: the fourth strategy's run is a pilot on the first ten questions of each type. It is never
+# a row of the table: it gets tables of its own, next to the rows the runs above have for those questions.
+PILOT = {"fact-graph": "fact-graph-20261005-161632.jsonl"}
+PILOT = {name: file for name, file in PILOT.items() if (RESULTS / file).exists()}
+# ADR 0019: no figure of the pilot is reported before its answers are read by hand, so docs/results.md
+# is held to the pilot's figures once the review of that reading is here.
+PILOT_REVIEW = "fact-graph-20261005-161632-review.md"
+NAMES = {"recent-turns": "RecentTurnsMemory", "retrieval": "RetrievalMemory", "consolidating": "ConsolidatingMemory",
+         "fact-graph": "FactGraphMemory"}
 GROUPS = ("neither", "earlier", "later", "both")
 
 
 def rows(name: str) -> list[dict]:
-    return [json.loads(line) for line in (RESULTS / RUNS[name]).read_text(encoding="utf-8").splitlines()]
+    return [json.loads(line) for line in (RESULTS / {**RUNS, **PILOT}[name]).read_text(encoding="utf-8").splitlines()]
+
+
+def sent(r: dict) -> int:
+    """The messages one recall held. A facts message is one message with an id per fact, so the row
+    counts them (ADR 0018); a row from before that has no count, and there sources gives it."""
+    return r["messages"] if r.get("messages") is not None else len(r["sources"])
 
 
 def framing(r: dict, label: str) -> int:
     """Input tokens the provider adds to one call: the system prompt and the question count as messages.
 
-    A consolidation call is the system prompt and one user message (ADR 0015)."""
-    messages = 2 + len(r["sources"]) if label == "answer" else 2
+    A consolidation call is the system prompt and one user message (ADR 0015), and so is an
+    extraction call (ADR 0018)."""
+    messages = 2 + sent(r) if label == "answer" else 2
     return FRAMING_PER_MESSAGE * messages + FRAMING_PER_CALL
 
 
@@ -69,7 +85,7 @@ def cell(rs: list[dict]) -> dict:
         reached=sum(r["evidence_reached"] for r in rs),
         recall=mean(r["recall"] for r in rs),
         precision=mean(r["precision"] for r in rs),
-        messages=mean(len(r["sources"]) for r in rs),
+        messages=mean(sent(r) for r in rs),
         tokens_used=mean(r["tokens_used"] for r in rs),
         input_per_q=tin / len(rs), output_per_q=tout / len(rs),
         cost_per_q=priced(paid) / len(rs), framed_per_q=priced(paid, with_framing=True) / len(rs),
@@ -87,12 +103,21 @@ def cell(rs: list[dict]) -> dict:
         out["reached_user_turns"] = sum(r["evidence_reached_user_turns"] for r in rs)
         out["recall_user_turns"] = mean(r["recall_user_turns"] for r in rs)
     if rs[0].get("evidence_consolidated") is not None:
-        # ADRs 0013, 0015–0017: the consolidating strategy's own figures.
-        cons = [(r, c) for r, c in paid if c["label"] == "consolidate"]
+        # ADR 0013: what a strategy that reads the sessions with a model reports next to its recall.
         answer = [(r, c) for r, c in paid if c["label"] == "answer"]
         out.update(
             consolidated=mean(r["evidence_consolidated"] for r in rs),
             consolidated_or_reached=sum(r["evidence_consolidated_or_reached"] for r in rs),
+            answer_cost_per_q=priced(answer) / len(rs),
+        )
+        if rs[0]["question_type"] == KU:
+            out["breakdown_consolidated"] = {
+                g: (sum(r["ku_breakdown_consolidated"] == g for r in rs),
+                    sum(r["ku_breakdown_consolidated"] == g and bool(r["correct"]) for r in rs)) for g in GROUPS}
+    if rs[0].get("summary_tokens") is not None:
+        # ADRs 0015–0017: the consolidating strategy's own figures.
+        cons = [(r, c) for r, c in paid if c["label"] == "consolidate"]
+        out.update(
             summary_tokens=mean(r["summary_tokens"] for r in rs),
             consolidations=sum(r["consolidations"] for r in rs),
             reasked=sum(r["summary_reasked"] for r in rs),
@@ -102,13 +127,56 @@ def cell(rs: list[dict]) -> dict:
             consolidate_in_per_q=sum(c["input_tokens"] for _, c in cons) / len(rs),
             consolidate_out_per_q=sum(c["output_tokens"] for _, c in cons) / len(rs),
             consolidate_cost_per_q=priced(cons) / len(rs),
-            answer_cost_per_q=priced(answer) / len(rs),
         )
-        if rs[0]["question_type"] == KU:
-            out["breakdown_consolidated"] = {
-                g: (sum(r["ku_breakdown_consolidated"] == g for r in rs),
-                    sum(r["ku_breakdown_consolidated"] == g and bool(r["correct"]) for r in rs)) for g in GROUPS}
+    if rs[0].get("facts_stored") is not None:
+        # ADR 0018: the fact graph's own figures.
+        extract = [(r, c) for r, c in paid if c["label"] == "extract"]
+        total = lambda key: sum(r[key] for r in rs)  # noqa: E731
+        out.update(
+            facts=tuple(mean(r[key] for r in rs) for key in ("facts_stored", "facts_replaced", "facts_held", "facts_shown")),
+            facts_message_tokens=mean(r["facts_message_tokens"] for r in rs),
+            facts_message_tokens_max=max(r["facts_message_tokens"] for r in rs),
+            said_again=total("facts_said_again"), dropped=total("entries_dropped"),
+            skipped=total("extractions_failed"), extractions=total("extractions"),
+            evidence_turn_facts=(total("evidence_turn_facts_replaced"), total("evidence_turn_facts_shown"),
+                                 total("evidence_turn_facts")),
+            extract_calls=len(extract),
+            extract_in_per_q=sum(c["input_tokens"] for _, c in extract) / len(rs),
+            extract_out_per_q=sum(c["output_tokens"] for _, c in extract) / len(rs),
+            extract_cost_per_q=priced(extract) / len(rs),
+        )
     return out
+
+
+def pilot() -> dict:
+    """ADR 0019: the four strategies on the pilot's questions, the first ten of each type.
+
+    The fourth strategy's rows are its pilot run; the other three are the rows their runs have for
+    the same questions."""
+    names = (*RUNS, *PILOT)
+    order = lambda r: (TYPES.index(r["question_type"]), r["position"])  # noqa: E731
+    rs = {name: sorted((r for r in rows(name) if r["position"] < PILOT_PER_TYPE), key=order) for name in names}
+    (fourth,) = (rs[name] for name in PILOT)
+    whole = [r for name in PILOT for r in rows(name)]
+    calls = [c for r in whole for c in r["calls"]]
+    by = {name: {r["question_id"]: r for r in rs[name]} for name in names}
+    return dict(
+        cells={(name, t): cell([r for r in rs[name] if r["question_type"] == t]) for name in names for t in TYPES},
+        # The run is the pilot and nothing else, and every strategy has a row for each of its questions.
+        same_questions=len(whole) == len(fourth) == len(TYPES) * PILOT_PER_TYPE and all(
+            [r["question_id"] for r in rs[name]] == [r["question_id"] for r in fourth] for name in names),
+        same_model=len({r["model"] for name in names for r in rs[name]}) == 1,
+        questions=[dict(id=r["question_id"], type=r["question_type"],
+                        verdicts={name: "yes" if by[name][r["question_id"]]["correct"] else "no" for name in names},
+                        reached="yes" if r["evidence_reached"] else "no",
+                        evidence_turn_facts=(r["evidence_turn_facts_replaced"], r["evidence_turn_facts_shown"],
+                                             r["evidence_turn_facts"])) for r in fourth],
+        run=dict(commit={r["commit"] for r in whole}, model={r["model"] for r in whole},
+                 extractor={r["extractor"] for r in whole}, calls=len(calls), failed=sum(c["failed"] for c in calls),
+                 cost=cost_of(calls),
+                 labels={label: (sum(c["label"] == label for c in calls), cost_of([c for c in calls if c["label"] == label]))
+                         for label in sorted({c["label"] for c in calls})}),
+    )
 
 
 def compute() -> dict:
@@ -123,6 +191,9 @@ def compute() -> dict:
             f["cells"][(name, t)] = cell([r for r in rs if r["question_type"] == t])
     f["total_cost"] = sum(v["cost"] for v in f["runs"].values())
     f["two_runs_cost"] = sum(f["runs"][n]["cost"] for n in ("recent-turns", "retrieval") if n in f["runs"])
+    if PILOT:
+        f["pilot"] = pilot()
+        f["total_cost"] += f["pilot"]["run"]["cost"]
     return f
 
 
@@ -174,10 +245,69 @@ def print_tables(f: dict) -> None:
         print("| | " + " | ".join(GROUPS) + " | not two sessions |")
         print("|---|" + "---:|" * (len(GROUPS) + 1))
         print("| `ConsolidatingMemory` | " + " | ".join(f"{k['breakdown_consolidated'][g][0]}, {k['breakdown_consolidated'][g][1]}" for g in GROUPS) + f" | {k['apart']} |")
+    if "pilot" in f:
+        print()
+        print_pilot(f["pilot"])
     print()
     for name, v in f["runs"].items():
         print(f"{name}: commit {fmt(sorted(v['commit']))}, model {fmt(sorted(v['model']))}, {v['calls']} calls, {v['failed']} failed, ${v['cost']:.4f} counted")
+    if "pilot" in f:
+        v = f["pilot"]["run"]
+        print(f"{', '.join(PILOT)}, the pilot: commit {fmt(sorted(v['commit']))}, model {fmt(sorted(v['model']))}, extraction by {fmt(sorted(v['extractor']))}, "
+              f"{v['calls']} calls, {v['failed']} failed, ${v['cost']:.4f} counted ("
+              + ", ".join(f"{label} {n} calls ${cost:.4f}" for label, (n, cost) in v["labels"].items()) + ")")
     print(f"all runs: ${f['total_cost']:.2f} counted, each call at its model's price (the answering model at ${PRICE_IN}/M in and ${PRICE_OUT}/M out)")
+
+
+def print_pilot(p: dict) -> None:
+    c = p["cells"]
+    names = (*RUNS, *PILOT)
+    (fourth,) = PILOT
+    s, k = c[(fourth, SSU)], c[(fourth, KU)]
+    both = lambda text: f"{text(s)} | {text(k)}"  # noqa: E731
+    print("The pilot (ADR 0019): the fourth strategy on the first ten questions of each type")
+    print(f"| on the same {len(p['questions'])} questions | " + " | ".join(f"`{NAMES[n]}`" + (", pilot" if n in PILOT else "") for n in names) + " |")
+    print("|---|" + "---:|" * len(names))
+    for t in TYPES:
+        print(f"| correct, {t} | " + " | ".join(f"{c[(n, t)]['correct']} of {c[(n, t)]['n']}" for n in names) + " |")
+    for t in TYPES:
+        print(f"| evidence reached, {t} | " + " | ".join(f"{c[(n, t)]['reached']} of {c[(n, t)]['n']}" for n in names) + " |")
+    for t in TYPES:
+        print(f"| cost per question, {t} | " + " | ".join(f"${c[(n, t)]['cost_per_q']:.4f}" for n in names) + " |")
+    print()
+    print(f"{NAMES[fourth]}, the pilot's own figures (ADRs 0013, 0018)")
+    print(f"| `{NAMES[fourth]}`, pilot | single-session-user | knowledge-update |")
+    print("|---|---:|---:|")
+    print("| recall / precision | " + both(lambda v: f"{v['recall']:.3f} / {v['precision']:.4f}") + " |")
+    print("| messages / tokens recalled | " + both(lambda v: f"{v['messages']:.0f} / {v['tokens_used']:,.0f}") + " |")
+    print("| evidence consolidated (0018), mean | " + both(lambda v: f"{v['consolidated']:.3f}") + " |")
+    print("| evidence consolidated (0018) or reached | " + both(lambda v: f"{v['consolidated_or_reached']} of {v['n']}") + " |")
+    print("| facts stored / replaced / held / shown, mean | " + both(lambda v: " / ".join(f"{x:.1f}" for x in v["facts"])) + " |")
+    print("| facts message tokens, mean / max | " + both(lambda v: f"{v['facts_message_tokens']:,.0f} / {v['facts_message_tokens_max']:,}") + " |")
+    print("| facts said again / entries dropped | " + both(lambda v: f"{v['said_again']} / {v['dropped']}") + " |")
+    print("| sessions skipped / all | " + both(lambda v: f"{v['skipped']} / {v['extractions']}") + " |")
+    print("| facts from an evidence turn: replaced / shown / all | " + both(lambda v: " / ".join(map(str, v["evidence_turn_facts"]))) + " |")
+    print("| extraction per question: calls, tokens in / out | "
+          + both(lambda v: f"{v['extract_calls'] / v['n']:.1f}, {v['extract_in_per_q']:,.0f} / {v['extract_out_per_q']:,.0f}") + " |")
+    print("| cost per question: answer + extraction | " + both(lambda v: f"${v['answer_cost_per_q']:.4f} + ${v['extract_cost_per_q']:.4f}") + " |")
+    print("| cost per question, counted / with framing | " + both(lambda v: f"${v['cost_per_q']:.4f} / ${v['framed_per_q']:.4f}") + " |")
+    print()
+    print("knowledge-update breakdown of the pilot (ADRs 0009, 0013): questions, correct")
+    print(f"| `{NAMES[fourth]}`, pilot | " + " | ".join(GROUPS) + " | not two sessions |")
+    print("|---|" + "---:|" * (len(GROUPS) + 1))
+    for label, key in (("window", "breakdown"), ("consolidated (0018) or reached", "breakdown_consolidated")):
+        print(f"| {label} | " + " | ".join(f"{k[key][g][0]}, {k[key][g][1]}" for g in GROUPS) + f" | {k['apart']} |")
+    print()
+    print("The pilot, question by question: the judge's verdict on each strategy's answer, and what the fourth strategy held")
+    print("| question | type | " + " | ".join(f"`{NAMES[n]}`" for n in names)
+          + " | evidence reached, pilot | facts from an evidence turn: replaced / shown / all |")
+    print("|---|---|" + "---|" * len(names) + "---|---:|")
+    for q in p["questions"]:
+        print(f"| `{q['id']}` | {q['type']} | " + " | ".join(q["verdicts"][n] for n in names)
+              + f" | {q['reached']} | " + " / ".join(map(str, q["evidence_turn_facts"])) + " |")
+    print()
+    print(f"{NAMES[fourth]}, pilot: 'I do not know' answers {s['idk']} + {k['idk']}; list-order reach on KU {k['reached_list_order']} of {k['listed']}"
+          f", {k['reached']} in clock order; same questions in every run: {fmt(p['same_questions'])}; same answering model: {fmt(p['same_model'])}")
 
 
 def claims(f: dict) -> list[Claim]:
@@ -217,7 +347,8 @@ def claims(f: dict) -> list[Claim]:
               (b[1]["reached_list_order"], b[1]["reached"])),
         Claim("results", "both runs cost", r"The harness counts \$([\d.]+) for the two runs", (f"{f['two_runs_cost']:.2f}",)),
         Claim("results", "commit", r"commit `([0-9a-f]{7})`", (next(iter(f["runs"]["retrieval"]["commit"])),)),
-    ] + (claims_consolidating(f) if ("consolidating", SSU) in c else [])
+    ] + (claims_consolidating(f) if ("consolidating", SSU) in c else []) + (
+        claims_pilot(f) if "pilot" in f and (RESULTS / PILOT_REVIEW).exists() else [])
 
 
 def claims_consolidating(f: dict) -> list[Claim]:
@@ -292,6 +423,71 @@ def claims_reading() -> list[Claim]:
         Claim("results", "rows: the Chinese notes", r"collapsed to\s+(\d+) tokens because the cut rule knows no Chinese full stop", (g["36580ce8"]["tokens"],)),
         Claim("results", "rows: skipped sessions held no evidence", r"none of them holding evidence", g["evidence consolidated everywhere"]),
     ]
+
+
+def claims_pilot(f: dict) -> list[Claim]:
+    """ADR 0019: every figure in the pilot's tables, the rows per question included."""
+    p = f["pilot"]
+    c = p["cells"]
+    names = (*RUNS, *PILOT)
+    (fourth,) = PILOT
+    s, k = c[(fourth, SSU)], c[(fourth, KU)]
+    money = lambda v: f"{v:.4f}"  # noqa: E731
+    each = lambda cell: r" \| ".join([cell] * len(names)) + r" \|"  # noqa: E731
+    group = r"(\d+), (\d+) \| (\d+), (\d+) \| (\d+), (\d+) \| (\d+), (\d+) \| (\d+) \|"
+    cs = [
+        Claim("results", "pilot: questions", r"\| on the same (\d+) questions \|", (len(p["questions"]),)),
+        Claim("results", "pilot: same questions and model in every run", r"\| on the same \d+ questions \|",
+              p["same_questions"] and p["same_model"]),
+    ]
+    for t in TYPES:
+        cells = [c[(n, t)] for n in names]
+        cs += [
+            Claim("results", f"pilot: correct, {t}", rf"\| correct, {t} \| " + each(r"(\d+) of (\d+)"),
+                  tuple(v for x in cells for v in (x["correct"], x["n"]))),
+            Claim("results", f"pilot: evidence reached, {t}", rf"\| evidence reached, {t} \| " + each(r"(\d+) of (\d+)"),
+                  tuple(v for x in cells for v in (x["reached"], x["n"]))),
+            Claim("results", f"pilot: cost per question, {t}", rf"\| cost per question, {t} \| " + each(r"\$([\d.]+)"),
+                  tuple(money(x["cost_per_q"]) for x in cells)),
+        ]
+    cs += [
+        Claim("results", "pilot: recall / precision", r"\| recall / precision \| ([\d.]+) / ([\d.]+) \| ([\d.]+) / ([\d.]+) \|",
+              (f"{s['recall']:.3f}", f"{s['precision']:.4f}", f"{k['recall']:.3f}", f"{k['precision']:.4f}")),
+        Claim("results", "pilot: messages / tokens", r"\| messages / tokens recalled \| (\d+) / ([\d,]+) \| (\d+) / ([\d,]+) \|",
+              (round(s["messages"]), round(s["tokens_used"]), round(k["messages"]), round(k["tokens_used"]))),
+        Claim("results", "pilot: evidence consolidated", r"evidence consolidated \(0018\), mean \| ([\d.]+) \| ([\d.]+) \|",
+              (f"{s['consolidated']:.3f}", f"{k['consolidated']:.3f}")),
+        Claim("results", "pilot: consolidated or reached", r"evidence consolidated \(0018\) or reached \| (\d+) of (\d+) \| (\d+) of (\d+) \|",
+              (s["consolidated_or_reached"], s["n"], k["consolidated_or_reached"], k["n"])),
+        Claim("results", "pilot: facts stored / replaced / held / shown",
+              r"facts stored / replaced / held / shown, mean \| ([\d.]+) / ([\d.]+) / ([\d.]+) / ([\d.]+) \| ([\d.]+) / ([\d.]+) / ([\d.]+) / ([\d.]+) \|",
+              tuple(f"{x:.1f}" for v in (s, k) for x in v["facts"])),
+        Claim("results", "pilot: facts message tokens", r"facts message tokens, mean / max \| ([\d,]+) / ([\d,]+) \| ([\d,]+) / ([\d,]+) \|",
+              (round(s["facts_message_tokens"]), s["facts_message_tokens_max"], round(k["facts_message_tokens"]), k["facts_message_tokens_max"])),
+        Claim("results", "pilot: said again / dropped", r"facts said again / entries dropped \| (\d+) / (\d+) \| (\d+) / (\d+) \|",
+              (s["said_again"], s["dropped"], k["said_again"], k["dropped"])),
+        Claim("results", "pilot: sessions skipped / all", r"sessions skipped / all \| (\d+) / (\d+) \| (\d+) / (\d+) \|",
+              (s["skipped"], s["extractions"], k["skipped"], k["extractions"])),
+        Claim("results", "pilot: facts from an evidence turn",
+              r"\| facts from an evidence turn: replaced / shown / all \| (\d+) / (\d+) / (\d+) \| (\d+) / (\d+) / (\d+) \|",
+              (*s["evidence_turn_facts"], *k["evidence_turn_facts"])),
+        Claim("results", "pilot: extraction calls and tokens", r"extraction per question: calls, tokens in / out \| ([\d.]+), ([\d,]+) / ([\d,]+) \| ([\d.]+), ([\d,]+) / ([\d,]+) \|",
+              (f"{s['extract_calls'] / s['n']:.1f}", round(s["extract_in_per_q"]), round(s["extract_out_per_q"]),
+               f"{k['extract_calls'] / k['n']:.1f}", round(k["extract_in_per_q"]), round(k["extract_out_per_q"]))),
+        Claim("results", "pilot: answer + extraction cost", r"cost per question: answer \+ extraction \| \$([\d.]+) \+ \$([\d.]+) \| \$([\d.]+) \+ \$([\d.]+) \|",
+              (money(s["answer_cost_per_q"]), money(s["extract_cost_per_q"]), money(k["answer_cost_per_q"]), money(k["extract_cost_per_q"]))),
+        Claim("results", "pilot: cost counted / with framing", r"\| cost per question, counted / with framing \| \$([\d.]+) / \$([\d.]+) \| \$([\d.]+) / \$([\d.]+) \|",
+              (money(s["cost_per_q"]), money(s["framed_per_q"]), money(k["cost_per_q"]), money(k["framed_per_q"]))),
+        Claim("results", "pilot: KU breakdown, window", r"\| window \| " + group,
+              (*(v for g in GROUPS for v in k["breakdown"][g]), k["apart"])),
+        Claim("results", "pilot: KU breakdown, consolidated or reached", r"\| consolidated \(0018\) or reached \| " + group,
+              (*(v for g in GROUPS for v in k["breakdown_consolidated"][g]), k["apart"])),
+    ]
+    for q in p["questions"]:
+        cs.append(Claim("results", f"pilot: {q['id']}",
+                        rf"`{q['id']}` \| {q['type']} \| " + each(r"(\w+)") + r" (\w+) \| (\d+) / (\d+) / (\d+) \|",
+                        (*(q["verdicts"][n] for n in names), q["reached"], *q["evidence_turn_facts"])))
+    return cs
 
 
 def main() -> int:
