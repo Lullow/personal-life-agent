@@ -1,7 +1,9 @@
 # Method (draft)
 
 Status: draft, written in M2 on 2026-10-03; the rules for
-`ConsolidatingMemory` added in M3 the same night, before its run. Every rule
+`ConsolidatingMemory` added in M3 the same night, before its run; the
+paragraphs on `FactGraphMemory` and its pilot added in M4 on 2026-10-05,
+after the pilot run, from records fixed before it (0018, 0019). Every rule
 below is fixed in an ADR before the strategy it applies to was measured; the
 number in brackets names the record, and the figures are the ones those
 records verify.
@@ -14,6 +16,10 @@ memory stand behind one interface, `ConversationMemory`, with three
 operations: `write` a turn, `retrieve` context for a question within a token
 budget, and `end_session`. A strategy decides for itself what to keep, what
 to recall and when to consolidate; the harness never does it for it.
+
+A fourth strategy, `FactGraphMemory`, was added in the last week. It stands
+behind the same interface and is measured as a pilot on 20 questions, in a
+table of its own; the comparison is the three (0018, 0019).
 
 The assistant the memory serves is a Swedish household planner that answers
 from its database rather than from memory, so the assistant is never in the
@@ -148,6 +154,75 @@ and its calls are not counted as the strategy's (0009, 0015). What the
 consolidator wrote is kept in every row, since the strategy cannot be
 replayed to the same text.
 
+**`FactGraphMemory`** keeps single facts with their times in a graph
+database and replaces a fact when a newer one has its name. After every
+session it makes one call to `gpt-4o-mini-2024-07-18`, the model that also
+consolidates, with the facts that hold so far and the session's turns,
+numbered; the reply is a list of triples, subject, relation and value, each
+with the turn it comes from (0018). A fact replaces the facts of earlier
+sessions that hold under its subject and relation. The names are compared
+after case folding, with runs of whitespace made one space, and nothing
+else; the rule is in the code and not left to the model, which is told the
+rule and never says what a fact replaces. A fact said again with the value
+it already has is not stored, and the older one stands. A replaced fact is
+kept, marked with what replaced it and when, and is never shown, so nothing
+is deleted and what held at an earlier time can still be asked for. The
+facts live in Neo4j 5.26.31, each as an edge from its subject to its value,
+in a store held to no size, behind a small store interface; the tests and
+the dry run use a store in the process. A fact is stamped with the
+strategy's clock when the extraction ran, as the notes are, and never with
+the time of its turn (0014); it holds at a cutoff when it was stored by
+then and not replaced by then. A session the model fails three times is
+skipped and counted (0016). At recall the facts that hold at the cutoff are
+ranked against the question with the BM25 of 0011, each on its line
+together with the text of the turn the model named for it. Walking down
+the ranking, a fact is taken when the facts message with its line added
+stays within F = 1000 tokens, and passed over when it does not. That
+message comes first, as one assistant turn, with the lines in the order
+they were stored and no date, rank, label or score; the most recent raw
+turns that fit in the rest of the budget follow, as for
+`ConsolidatingMemory`. Recall and precision count the window only, and
+every fact shown counts as one recalled item that matches no evidence, so
+precision falls by construction and is reported, not compared. *Evidence
+consolidated* means less here than for the notes: that an evidence turn's
+session gave at least one fact that is shown, not that the fact is the
+right one (0013, 0018). The row also counts the facts stored, replaced,
+held and shown, and of the facts that name an evidence turn how many were
+replaced and how many shown, so that what the rule hides is counted next to
+what it finds. The prompt and the rule were shaped, and the ranking text
+chosen, on a spike over the eight `knowledge-update` histories that no run
+measures, in three rounds without answers or grading; they and F were fixed
+before the strategy's first run. The extraction calls are the strategy's
+own cost under their own label; those of the list-order replay, here made
+on all ten `knowledge-update` questions, are not (0009, 0018). The facts of
+every replay are written out next to the run's rows, since an extraction
+cannot be made again to the same names.
+
+## The pilot (0019)
+
+The fourth strategy is measured on the 20 questions of the M1 pilot, the
+first ten of each type in the committed order, so they were not picked after
+any result and every strategy has rows for them. Its figures stand in a table
+of their own, the four strategies on the same 20 questions, where the other
+three are read from the rows of their committed runs of 2 and 3 October. It
+is never a row of the main table. With ten questions per type one question
+moves a share by 0.1, and a repeat of the same 20 questions changed one
+answer, so a difference of one or two questions between two rows is not a
+finding. The pilot reports what happened on each question and whether the
+mechanism works at all. Its answers were read by hand before any figure was
+reported, and for every wrong answer the reading says whether the value was
+in the graph, whether it was shown, and whether the old value had been
+replaced or both were held.
+
+That reading was not made as the earlier ones were. An AI assistant in chat
+read all 20 answers first and sorted them, and its summary of the errors was
+in the chat before the author read. The author then judged the seven
+questions that need a judgement, the four errors and three others, one of
+them together with the assistant, and went over the other thirteen against
+the assistant's rows, which is a check of those rows and not a second
+sorting. The notes were then checked against the rows, the facts the run
+left and the dataset, and the review says where the rows differ from them.
+
 ## Answering and grading (0008)
 
 The model receives the strategy's recalled messages unchanged as its own
@@ -213,6 +288,8 @@ dialogue, not two independent ones: the author read every answer and gave a
 judgement, an AI assistant in chat gave its own, and the categories are what
 the two agreed on; the author's notes and the review written from them,
 checked against the rows and the dataset, are both kept in `evals/results/`.
+The pilot's reading went the other way round, the assistant first, and is
+described under "The pilot".
 
 ## Limitations of the method, so far
 
@@ -241,3 +318,31 @@ checked against the rows and the dataset, are both kept in `evals/results/`.
 - The recall figure of `ConsolidatingMemory` measures its window only; what
   the notes carried is visible in accuracy and in *evidence consolidated*,
   not in recall (0013).
+- The fourth strategy is a pilot on 20 questions that had been used before:
+  by the M1 pilot, by the smoke tests of the third row and, for the first
+  question of each type, by its own smoke test. It cannot rank the strategy
+  against the other three (0019).
+- Its prompt and rule were shaped on eight unmeasured histories that share
+  54 filler sessions with measured ones, 14 of them with the pilot's 20. No
+  evidence session, question or answer of a measured history was seen (0018).
+- The rule replaces on the name, and the names are the extraction model's.
+  They are not reproducible between runs; a changed value that gets a new
+  name is not replaced, and unrelated facts under a general name replace each
+  other. The rows count what was replaced, and the reading says where a
+  changed value was not (0018, 0019).
+- The fourth strategy differs from the third in more than what it is there
+  to test: another prompt, triples instead of prose, and a choice among the
+  facts for each question. The pilot does not tell these apart (0018).
+- LongMemEval asks one question, after the last session, so the pilot
+  measures the last state only. What held at an earlier time is kept in the
+  graph and is not measured (0019).
+- The graph is a store of timestamped edges, not a graph that is traversed:
+  nearly every fact hangs on the user, all but 15 of the 2,381 the pilot
+  stored (0018).
+- The grading template for `knowledge-update` has no rule for an answer that
+  holds only a part of the reference. In the pilot one such answer was
+  accepted and one rejected; the verdicts stand as the judge gave them, and
+  the review names the questions (0008).
+- The pilot's hand reading was less independent than the earlier ones: the
+  AI assistant read first, and the author judged seven of the 20 answers and
+  checked the other thirteen against its rows.

@@ -8,8 +8,8 @@ larger work in the memory layer.
 **The VG project** compares three conversation-memory strategies against each
 other on LongMemEval: `RecentTurnsMemory`, `RetrievalMemory` and
 `ConsolidatingMemory`. The comparison is what gets graded. A fourth strategy,
-`FactGraphMemory`, was built in M4, to be measured as a pilot in a table of
-its own (0018, 0019); it is not a part of that comparison.
+`FactGraphMemory`, was built in M4 and measured as a pilot in a table of its
+own (0018, 0019); it is not a part of that comparison.
 
 **The agent project** is the household planner itself — the `life_agent`
 package, a Typer CLI. In the VG project it is the consumer of the memory layer
@@ -172,6 +172,35 @@ examination. The exception covers that wiring and nothing else. It is
 optional, it is the first thing cut, and it is given up if it is not done in
 three hours, with nothing of it committed half done. The default strategy
 stays `RecentTurnsMemory`, and the agent never appears in the measured path.
+
+The pilot closed at the checkpoint on Monday 5 October, two days before the
+hard stop. `FactGraphMemory` is built under ADR 0018, after a spike of three
+rounds on the eight histories no run measures. It ran as a pilot on the 20
+pilot questions on 5 October under ADR 0019: 1,475 calls, none failed, no
+session skipped, and 30 graphs in Neo4j, one for each of the 20 questions and
+10 for the list-order replays of the `knowledge-update` questions. The
+answers were read by hand on 5 October, and the pilot's table of four
+strategies on the same 20 questions is in `docs/results.md`, every figure
+checked by `evals/results_table.py`. The method section covers the fourth
+strategy and the pilot.
+
+Of the three stops, Monday's was not met by what the repo holds. The demo
+(`docs/demo.md`) and the script that sets one question side by side through
+every strategy are there from Sunday 4 October, but the order of the
+presentation and the screenshots to fall back on are not in the repo, and
+the three questions it walks through are named only in that script's usage
+line. Monday went to the spike, the two records, the class and the pilot
+instead, the reverse of the order the plan set, and the presentation's
+preparation goes on into Tuesday. Tuesday's stop was met a day early, on
+Monday 5 October, when the class, its tests and the smoke test were done,
+and Wednesday's was met the same day.
+
+The run on all 122 questions was not made and the graph in the agent was not
+built: Tuesday and Wednesday go to the presentation, where the replaced edge
+is shown in Neo4j itself. By the readings of the OpenRouter account the
+spike cost $0.57, the smoke test $0.11 and the pilot run $1.15 ($0.60, $0.12
+and $1.18 by the harness's count); with the $26.90 at the close of M3 the
+measurement has cost $28.73 so far, about 284 SEK at 0010's rate.
 
 **Step 7 — the presentation and a short report. Thursday 8 and Friday 9
 October.** The examination is the presentation. The report lives in the repo,
