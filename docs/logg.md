@@ -127,6 +127,43 @@ frågorna uppdelade efter om svaret blev rätt eller fel, med det som
 visades för modellen per fråga. Utfallet är oläst tills jag har läst dem
 för hand (ADR 0019).
 
+---
+
+Kvällen: läsningen av pilotens 20 svar, och sedan stängdes pilotdelen av
+M4.
+
+Läsningen gick till så att AI-assistenten läste alla 20 svar först. Jag
+bedömde sju själv och kontrollerade de tretton andra mot dess rader.
+Mina anteckningar prövades sedan mot resultatraderna: 158 av 161
+påståenden stämde. Anteckningarna står kvar orörda, och genomgången
+följer raderna.
+
+Där jag hade fel: jag räknade att värdet fanns bland de visade fakta i
+18 av 20 frågor, raderna ger 17. Och tre frågor gäller själva ändringen,
+inte två.
+
+Resultatet enligt domaren: faktagrafen fick 10 av 10 på de vanliga
+frågorna och 6 av 10 på ändrade fakta (5 av 10 om man ser till
+innehållet). På samma 20 frågor fick baslinjen 0 och 3, sökningen 9 och
+6, och sammanfattningen 4 och 3. Piloten rangordnar inte strategierna,
+en enda fråga är 0,1.
+
+Det jag förstår är att de fyra felen sitter på fyra olika ställen:
+utdraget, regeln, modellens svar och ett som var nästan rätt. Regeln
+ersatte det gamla värdet med det nya i sex av tio frågor om ändrade
+fakta, och varje gång rätt. Men enligt agentens läsning gäller 45 av de
+70 ersättningarna en annan sak under samma namn.
+
+Bra att tänka på: på vägen hittades två fel i äldre genomgångar. De har
+fått daterade rättelser, och originaltexten står kvar.
+
+Pilotdelen av M4 är stängd, två dagar före det hårda stoppet. Körningen
+på alla 122 frågor görs inte, och grafen kopplas inte till agenten. I
+stället visas kedjan direkt i Neo4j. Kostnaden hittills är 28,73 dollar.
+
+Kvar till tisdag: körordningen och de tre frågorna ska in i repot, och
+jag ska bestämma var reservbilderna ska ligga.
+
 ## 2026-10-04
 
 Körningen av den tredje strategin (sammanfattning) blev klar under
