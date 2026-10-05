@@ -2,6 +2,89 @@
 
 Senaste överst. Vad jag gjorde, vad jag fick, vad som förvånade mig.
 
+## 2026-10-05
+
+Godkände körordningen för redovisningen, så första steget i M4 är klart.
+Satte sedan upp Neo4j i Docker.
+
+Förmiddagen gick till spiken, ett prov inför ADR 0018 som inte mäter
+något: inga frågor besvaras och inget rättas. Varje session skickas till
+gpt-4o-mini, som plockar ut fakta som tripplar (vem, relation, värde),
+och de ritas in i grafen. Provet kördes på de åtta KU-historiker som
+inte ingår i mätningen, i tre rundor med olika regler för hur ett gammalt
+värde ersätts.
+
+Runda 1, inget ersätts: 1 342 fakta, men modellen kallar inte samma sak
+samma namn i två sessioner. Runda 2, modellen pekar själv ut vad som
+ersätts: 8 ersättningar, och ingen gällde det värde frågan handlar om.
+Runda 3, koden ersätter när vem och relation är samma: 74 ersättningar,
+men bara 1 gick från en evidenstur till en annan (väckningstid 8:30 till
+7:30).
+
+Agentens läsning är att det går bra att plocka ut fakta: det nya värdet
+kom med i alla åtta historiker. Det svåra är att ersätta rätt. Ungefär
+56 av de 74 ersättningarna är olika saker som fått samma allmänna namn,
+till exempel recent_activity. Det är en bedömning, inte räknat.
+
+Det som inte gick som planerat: regeln som guiden gissade på före provet
+var den som fungerade minst dåligt, men den ersätter fel oftare än rätt.
+Och grafen blev en stjärna runt användaren, inte ett nät.
+
+Bra att tänka på: agenten körde runda 3 utan att fråga först (0,21
+dollar). Jag bad sedan om en kontroll av regeln efter fallgropar, utan
+modellanrop. Den hittade fyra problem, med ett förslag till lösning på
+vart och ett. Ett av dem är att regeln ersätter fakta som inte hör ihop.
+
+Tog sex skärmbilder av grafen som reserv till fredag. En av dem visar en
+fråga mot en tidpunkt: 25 maj gäller 8:30, 28 maj gäller 7:30. Det är
+det pitchen kallade facit vid varje tidpunkt, visat på ett exempel men
+inte mätt.
+
+Provet kostade 0,60 dollar. Vilken regel som går in i ADR 0018 är inte
+bestämt än. Agenten rekommenderar regeln från runda 3 med de fyra
+lösningarna.
+
+Kvar: M4 in i docs/vg-project.md, ADR 0018 och 0019. Tisdag: bygget,
+testerna och röktestet.
+
+---
+
+Efter lunch: planen och ADR:erna för faktagrafen.
+
+Jag valde regeln från runda 3 med de fyra lösningarna från
+fallgropskontrollen. M4 står nu i docs/vg-project.md med tre stopp
+(måndag, tisdag och onsdag kväll) och en strykordning.
+
+Agenten skrev utkast till två ADR:er, och jag läste dem och lämnade
+ändringar i fyra omgångar. ADR 0018 beskriver grafens design: ett nytt
+värde ersätter det gamla när vem och relation är samma, och det ersatta
+raderas inte utan märks med tid. ADR 0019 säger att grafen mäts som en
+pilot på 20 frågor i en egen tabell.
+
+Jag läste själv de 8 ersättningarna från runda 2: 1 var rätt, 1 var
+samma värde med mer detalj och 6 var fel.
+
+Ett beslut jag vill vara ärlig med. Runda 2:s prompt höll namnen
+stabilare, så frågan var om den borde användas i stället. Min gräns för
+att byta: värdet ersätts i minst 4 av 8 och färre än 4 evidensfakta
+döljs. Jag bestämde den innan uppspelningen kördes, men skrev inte ner
+den förrän jag hade sett resultatet. Utfall: 5 av 8 (ja) och 4 av 69
+(nej). Runda 3 står kvar.
+
+Bra att tänka på: prompten jag behåller klarar inte heller gränsen. Den
+gällde ett byte, eftersom runda 2:s prompt inte går att använda som den
+är, och underlaget bara är en körning per prompt på åtta historiker.
+
+Ett nytt skript räknar om siffrorna i båda ADR:erna utan modellanrop: 69
+stämmer, 10 kommer utifrån och 0 avviker. Ett par siffror i guiden gick
+inte att återskapa och är rättade.
+
+Svagheten står utskriven i ADR 0018: överskrivningen träffade det
+ändrade värdet i bara 2 av 8 historiker.
+
+Kvar: committa, sedan bygget på tisdag. Är klassen, testerna och
+röktestet inte klara tisdag kväll mäts ingen pilot.
+
 ## 2026-10-04
 
 Körningen av den tredje strategin (sammanfattning) blev klar under
