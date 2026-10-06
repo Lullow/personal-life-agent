@@ -55,6 +55,7 @@ pip install -e '.[graph]'
 .venv/bin/python evals/verify_adr_0015.py           # the same for ADRs 0015–0017
 .venv/bin/python evals/verify_adr_0018.py           # the same for ADRs 0018–0019
 .venv/bin/python evals/results_table.py --check    # every figure in docs/results.md, and README.md's overview
+.venv/bin/python evals/measurement_cost.py --check # what the measurement cost, in dollars and SEK (docs/vg-project.md)
 
 # Run
 python -m life_agent chat

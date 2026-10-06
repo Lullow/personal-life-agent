@@ -127,7 +127,8 @@ figure checked by `evals/results_table.py`. The method section covers the
 third strategy. Three rules were reopened before the strategy was measured,
 each on a smoke test and each as a new record; nothing measured had to be
 measured again. The gpt-4o check that 0010 set aside was not made. The
-measurement has cost $26.90 so far, about 266 SEK at 0010's rate.
+measurement had cost $19.13 by then; the $26.90 first written here was wrong
+(see "What the measurement cost", below).
 
 **M4 — a fourth strategy as a pilot, and the presentation. Monday 5 to
 Friday 9 October.**
@@ -198,8 +199,8 @@ The run on all 122 questions was not made and the graph in the agent was not
 built: Tuesday and Wednesday go to the presentation, where the replaced edge
 is shown in Neo4j itself. By the readings of the OpenRouter account the
 spike cost $0.57, the smoke test $0.11 and the pilot run $1.15 ($0.60, $0.12
-and $1.18 by the harness's count); with the $26.90 at the close of M3 the
-measurement has cost $28.73 so far, about 284 SEK at 0010's rate.
+and $1.18 by the harness's count). What the whole measurement has cost is in
+"What the measurement cost", below.
 
 **Step 7 — the presentation and a short report. Thursday 8 and Friday 9
 October.** The examination is the presentation. The report lives in the repo,
@@ -210,6 +211,39 @@ is finished here, not started: each milestone has already added its part.
 **Step 4 — persistence, timestamps and session ids, in memory's own store.**
 After the deadline. Persistence is needed by the agent, not by the
 measurement. Tentative until it is known whether the course requires it.
+
+## What the measurement cost
+
+The measurement has cost **$20.96**, by the readings of the OpenRouter
+account before and after each milestone's runs: $0.43 for M1, $5.17 for M2,
+$13.53 for M3 and $1.83 for M4. The harness counts $19.56 for the calls in
+the committed rows; it does not count the framing the provider adds (0010),
+the output of a call that failed, or a call that left no row.
+
+The credits were bought on 20 May and 2 October 2026, and the bank charged
+them on 21 May and 3 October: $10 of credits for 124.23 SEK and $50 for
+676.02 SEK. The receipts come to $78.90 for the $60 of credits, since
+OpenRouter adds a fee, and on the second receipt 25% VAT. That is 800.25 SEK
+for $60, or 13.34 SEK a credit dollar, where 0010 converted the cap at 9.90.
+At the price paid the measurement has cost about **280 SEK**, 28% of the cap
+of 1000 SEK, and the cap is $74.98 of credits, not the $101.00 that 0010 and
+0019 count with.
+
+The account has used $29.69 in all, and the other $8.73 is not the
+measurement. $8.65 of it was used before the harness made its first call:
+the account is from May, and the harness and the M1 pilot are of 27
+September. The last $0.08 was used between M3's last reading and M4's
+first. All that was bought, 800.25 SEK, is under the cap as well.
+
+Two figures that stood in this file were wrong. The close of M3 said $26.90
+and the close of M4 $28.73, and 0019 quotes the first. Both took the
+measurement to be everything the account had used since it was opened, less
+the $0.88 it used in September. But the account had used $9.08 when M2
+began, and of that only M1's $0.43 was the measurement. The decision in 0019
+does not rest on the figure: it overstated what had been spent, and the
+pilot fitted under the cap either way.
+`evals/measurement_cost.py --check` recomputes every figure in this section
+from the readings, the receipts and the committed rows.
 
 ## Where the project departs from its proposal
 
