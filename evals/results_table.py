@@ -408,7 +408,14 @@ def claims_reading() -> list[Claim]:
     notes_only = cb[("SSU", "anteckningarna")] + cb[("KU", "anteckningarna")]
     window_only = cb[("SSU", "fönstret")] + cb[("KU", "fönstret")]
     both = cb[("SSU", "båda")] + cb[("KU", "båda")]
+    # Correct `knowledge-update` answers whose notes held the newer value only: those answered from the
+    # notes or from both, and the one guess, which asks for the earlier value (the notes' remark on it).
+    ku_newer_only = cb[("KU", "anteckningarna")] + cb[("KU", "båda")] + cb[("KU", "gissning")]
+    ku_correct = sum(n for (qtype, _), n in cb.items() if qtype == "KU")
     return [
+        Claim("results", "reading: notes with the newer value only, among the correct changed-fact answers",
+              r"held the newer value only in (\d+) of its (\d+) correct `knowledge-update`\s+answers, and in none both, so the summary does replace the old value. The\s+other (\d+) were answered from the window, with neither value in the notes",
+              (ku_newer_only, ku_correct, cb[("KU", "fönstret")])),
         Claim("results", "reading: correct by distance",
               r"(\d+) of (\d+) under\s+8,000, (\d+) of (\d+) from 8,000 to 20,000, (\d+) of (\d+) from 20,000 to 40,000, (\d+) of (\d+)\s+from 40,000 to 70,000 and (\d+) of (\d+) beyond",
               tuple(v for _, _, c, n in dist for v in (c, n))),

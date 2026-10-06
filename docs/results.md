@@ -121,9 +121,10 @@ reading say so.
 **The third hypothesis does not hold as stated.** `ConsolidatingMemory`
 answers 20 of 61 changed-fact questions against `RetrievalMemory`'s 47, and
 14 of 61 single-fact questions against 50. It beats the baseline on both, 9
-and 3. The mechanism the hypothesis names is real: by the reading, in every
-one of its 20 correct `knowledge-update` answers the notes held the newer
-value only, and in none both, so the summary does replace the old value.
+and 3. The mechanism the hypothesis names is real: by the reading, the notes
+held the newer value only in 16 of its 20 correct `knowledge-update`
+answers, and in none both, so the summary does replace the old value. The
+other 4 were answered from the window, with neither value in the notes.
 What the hypothesis did not say is how little survives the replacing. The
 consolidator read every evidence turn in every question, 61 of 61 in both
 types, while the window alone reached 6 and 10; yet by the reading the

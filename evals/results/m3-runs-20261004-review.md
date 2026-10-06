@@ -109,8 +109,9 @@ assembled the answer from "Cartwheel app from Target" in the notes.
 `603deb26` is counted as answered from the notes by the reading; the rows
 show the turn that restates the fact, `answer_8afdebac_2:10`, in the window
 as well, as in M2, so it belongs to "both" by the window's restatement. In
-every correct `knowledge-update` answer the notes held the newer value only;
-in none both.
+16 of the 20 correct `knowledge-update` answers the notes held the newer
+value only, and in none both; the other 4 were answered from the window,
+with neither value in the notes.
 
 ## What the rows add
 
@@ -158,9 +159,9 @@ in none both.
 
 **The third hypothesis does not hold as stated.** `ConsolidatingMemory`
 answers 20 of 61 changed-fact questions against `RetrievalMemory`'s 47. The
-mechanism the hypothesis names is real: in every correct `knowledge-update`
-answer the notes held the newer value only, and in none both, so the summary
-does replace. What the hypothesis did not say is how little survives the
+mechanism the hypothesis names is real: in 16 of the 20 correct
+`knowledge-update` answers the notes held the newer value only, and in none
+both, so the summary does replace. What the hypothesis did not say is how little survives the
 replacing: in 42 of the 61 questions the notes held neither value, and the
 "old value kept" box is empty because the old value was gone too. Where the
 question asks for the earlier value, replacing is the error (`0977f2af`,
