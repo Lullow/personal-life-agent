@@ -184,16 +184,15 @@ strategies on the same 20 questions is in `docs/results.md`, every figure
 checked by `evals/results_table.py`. The method section covers the fourth
 strategy and the pilot.
 
-Of the three stops, Monday's was not met by what the repo holds. The demo
-(`docs/demo.md`) and the script that sets one question side by side through
-every strategy are there from Sunday 4 October, but the order of the
-presentation and the screenshots to fall back on are not in the repo, and
-the three questions it walks through are named only in that script's usage
-line. Monday went to the spike, the two records, the class and the pilot
-instead, the reverse of the order the plan set, and the presentation's
-preparation goes on into Tuesday. Tuesday's stop was met a day early, on
-Monday 5 October, when the class, its tests and the smoke test were done,
-and Wednesday's was met the same day.
+Of the three stops, Monday's was met a day late, on Tuesday 6 October. The
+demo (`docs/demo.md`) and the script that sets one question side by side
+through every strategy were there from Sunday 4 October; the order of the
+presentation, the three questions it walks through and the screenshots to
+fall back on went into the repo as `docs/presentation.md` on the Tuesday,
+after the pilot had closed. Monday went to the spike, the two records, the
+class and the pilot instead, the reverse of the order the plan set.
+Tuesday's stop was met a day early, on Monday 5 October, when the class, its
+tests and the smoke test were done, and Wednesday's was met the same day.
 
 The run on all 122 questions was not made and the graph in the agent was not
 built: Tuesday and Wednesday go to the presentation, where the replaced edge
@@ -211,6 +210,79 @@ is finished here, not started: each milestone has already added its part.
 **Step 4 — persistence, timestamps and session ids, in memory's own store.**
 After the deadline. Persistence is needed by the agent, not by the
 measurement. Tentative until it is known whether the course requires it.
+
+## Where the project departs from its proposal
+
+The project was proposed on 10 September 2026 as a comparison of three memory
+strategies: simple vector search as the baseline, timestamped facts with
+explicit overwrite, and consolidation by a language model. They were to be
+evaluated on a dataset written for the project, of sessions in which facts
+change, with gold for what the assistant should believe at each point in
+time, and measured on retrieval precision and recall, on how often an answer
+rests on a stale value, on token cost and on latency. The proposal named the
+evaluation method as its contribution. The reply accepted it and suggested
+adding a graph database or another complementary data storage architecture.
+
+| Proposed | As it stands |
+|---|---|
+| Three strategies compared | Three strategies compared on 122 questions, every answer read by hand, and a fourth measured as a pilot. Two of the three are not the ones proposed. |
+| Vector search, as the baseline | BM25 search, as a strategy of its own. The baseline is the most recent turns. |
+| Timestamped facts with explicit overwrite | Built as `FactGraphMemory` and measured as a pilot on 20 questions. |
+| A graph database, from the reply | Neo4j holds the fourth strategy's facts in the measured run. |
+| A dataset of its own, with gold at every point in time | LongMemEval, which asks one question per history, after its last session. |
+| Precision and recall, stale answers, token cost | Reported in `docs/results.md`. |
+| Latency | Not measured. |
+
+**The baseline is the most recent turns, and the search is BM25.** The agent
+already kept its last turns, so `RecentTurnsMemory` is the floor the others
+are held against, and the search became a strategy of its own. 0010 assumed
+an embedding index for it and 0011 rejected one: it needed three more rules,
+each with its own check (how a message longer than the model's input limit is
+embedded, how embedding tokens are counted, and what a cache may hide from
+the cost), the dry run could no longer have computed recall offline, and M2
+was already at its date. The money was not the reason: the $0.25 that 0010
+set aside for embeddings was not spent. What it costs is in
+`docs/method.md`: the row is one lexical index, and a dense index would miss
+less on paraphrase and was not measured.
+
+**The timestamped facts came last, as a pilot.** Neither that strategy nor a
+graph database had been built when the project was compared with its
+proposal on 4 October (M4, above). `FactGraphMemory` was then built with its
+facts in Neo4j (0018) and measured on the 20 pilot questions. It is not a row
+of the comparison: the run on all 122 questions fitted the time and the
+money, but reading 122 more answers by hand before 9 October did not, and an
+unread row would break the method's own rule (0019). Nearly all its facts
+hang on the user, so the graph is a star: a store of timestamped edges and
+not a graph that is traversed (0018).
+
+**The dataset is LongMemEval.** The project's own dataset was meant to grow
+while the agent was built during the term. That building did not happen as
+planned, so the dataset hardly exists. LongMemEval is made for this task: its
+`knowledge-update` questions are a value the user states and later changes,
+with gold, which is what the project's own dataset was to hold; each comes
+with a history of about 48 sessions and about 100,000 tokens, and the turns
+that hold the answer are marked, which is what makes recall measurable. What
+the change gave up is the gold at each point in time: LongMemEval asks one
+question, after the last session, so only the last state is measured. In every strategy `retrieve(at=T)` leaves out what
+was written after T, and `FactGraphMemory` keeps a replaced fact, so that
+what held at an earlier time can still be asked for. That is shown on one
+example in the presentation and is not measured (0019). The conversations
+are English; for the Swedish assistant the results are an indication to be
+checked.
+
+**Stale answers are counted in the hand reading.** The harness records
+whether the judge accepted an answer. Whether a wrong answer gave the older
+value is sorted by hand when the answers are read, and `docs/results.md`
+reports the counts.
+
+**Latency was not measured.** No rule for timing was recorded among the
+rules of the measurement (0004–0019), and no row records how long a call
+took. Cost is reported in dollars, tokens and model calls per question.
+
+**What stands** is the part the proposal named as its contribution, the
+method: a rule is recorded before the strategy it applies to is measured,
+the answers are read by hand before a figure is reported, and every figure
+in the report is recomputed by a script (see "Keeping on track", below).
 
 ## Keeping on track
 
