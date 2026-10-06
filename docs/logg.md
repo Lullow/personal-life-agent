@@ -45,6 +45,39 @@ Kvar: committa, rätta bildspelet och meningen i rapporten, och två
 genomkörningar med klocka på torsdag. Torsdag slås grenen ihop med main,
 så att Gabriel ser rätt README.
 
+---
+
+Kvällen: bildspelet rättat, och ett stöd för själva framförandet.
+
+Agenten gick igenom bildspelet punkt för punkt mot repot innan något
+ändrades. Avvikelserna från tidigare idag är rättade, utom två. Planen
+är fortfarande 30 minuter utan tid för frågor. Och en av granskningens
+punkter var själv fel: testraden var den som bildspelet sa.
+
+Jag ställde fyra frågor, och två svar är värda att komma ihåg.
+Bildspelet påstod att jag hade skrivit tolkningar i förväg för varje
+tänkbart utfall. Det finns inget sådant i repot, och jag känner inte
+igen det, så meningen är struken. Och budgeten på 8 000 tokens
+räknades aldrig fram. Talet lades in i koden 6 september som ett väl
+tilltaget tak för planerarens minne, och ADR 0006 låste det för alla
+strategier innan något mättes. I efterhand är nivån rimlig av tre
+skäl. Den är bara 8 % av en historik, så minnet måste välja: i 105 av
+122 frågor ligger svaret utom räckhåll för de senaste turerna. Den är
+mer än planeraren själv använder, eftersom tio replikskiften blir som
+mest knappt 7 000 tokens i testsamtalen. Och den håller kostnaden
+nere. Men varför just 8 000 står ingenstans, och jag har bara mätt en
+budget.
+
+Felet i rapporten från tidigare idag är rättat: 16 av 20, inte alla 20.
+Det slank igenom för att kontrollskriptet inte hade något påstående för
+just den meningen. Nu har det det.
+
+Bra att tänka på: 30 minuter är en utgångspunkt, inte skrivet i sten.
+
+Kvar: läsa manuset och klicka igenom bildspelet, kostnaden i kronor och
+skärmbilderna. Torsdag: två genomkörningar, ihop med main och repot till
+Gabriel.
+
 ## 2026-10-05
 
 Godkände körordningen för redovisningen, så första steget i M4 är klart.
