@@ -78,6 +78,40 @@ Kvar: läsa manuset och klicka igenom bildspelet, kostnaden i kronor och
 skärmbilderna. Torsdag: två genomkörningar, ihop med main och repot till
 Gabriel.
 
+---
+
+Senare på kvällen: kostnaden i kronor, och en dollarsumma som var fel.
+
+Rapporten ska säga vad mätningen kostade i kronor, framräknat av ett
+skript. När skriptet skrevs visade det sig att dollarsumman i
+docs/vg-project.md var fel. Där stod 26,90 dollar när M3 stängdes och
+28,73 efter M4. Rätt är 19,13 och 20,96.
+
+Felet uppstod 4 oktober, i en räkning som agenten gjorde en gång utan
+skript. Kontot hade använt 8,65 dollar innan riggen gjorde sitt första
+anrop, och det mesta av det räknades med av misstag. Det upptäcktes när
+riggens egen räkning över alla sparade rader gav 19,56 dollar, långt
+under 28,73.
+
+Rätt siffror: mätningen har kostat 20,96 dollar, ungefär 280 kr med det
+jag faktiskt betalade per dollar (13,34 kr). Det är 28 % av taket på
+1 000 kr. De tre strategierna kostade 19,13 dollar, vilket ligger inom
+uppskattningen i ADR 0010.
+
+Rättelse av loggen: 4/10 skrev jag ungefär 359 kr och 5/10 28,73 dollar.
+Båda byggde på den felaktiga summan.
+
+Siffran hade hunnit sprida sig till bildspelet, sammanfattningssidorna
+och kartan. De är rättade. ADR 0019 citerar den gamla summan och står
+orörd, eftersom en ADR aldrig ändras. Beslutet där vilade inte på talet.
+
+Bra att tänka på: en siffra som inte räknas av ett sparat skript kan
+vara fel i flera dagar utan att någon märker det. Det skrev jag redan
+26/9, och det gällde fortfarande.
+
+Kvar: ta bort "(draft)" i rapporten, skärmbilderna och torsdagens
+genomkörningar.
+
 ## 2026-10-05
 
 Godkände körordningen för redovisningen, så första steget i M4 är klart.
