@@ -30,6 +30,85 @@ Your data lives in a local SQLite file with no accounts and no sync. The model
 that reads your messages does not: see [docs/privacy.md](docs/privacy.md) for
 exactly what leaves your machine, and how to move to a local model.
 
+## The VG project: a comparison of memory strategies
+
+The repo holds two projects. One is the agent described on this page. The
+other is a course project that compares ways of giving such an agent a
+memory, and it is the part that is graded. If you are here for that, this
+section is the place to start.
+
+**The question.** An assistant that is talked to for weeks cannot hand the
+whole conversation to the model each time. At the same budget, 8,000 tokens
+of recalled conversation per answer, which kinds of memory question does each
+strategy answer, and at what cost?
+
+**What was built.** One interface, `ConversationMemory` in
+`life_agent/agent/memory.py`, with the strategies behind it, and a harness,
+`evals/longmemeval.py`, that drives them without the agent. For each of 122
+questions from the LongMemEval benchmark it replays a history of about 48
+sessions into the strategy, asks the question, and has the answer graded.
+Half the questions ask for a fact the user stated once, half for a fact the
+user later changed.
+
+**The result.** Correct answers per question type, and what the strategy's
+model calls cost:
+
+| | a fact stated once | a fact that changed | cost per question |
+|---|---:|---:|---:|
+| `RecentTurnsMemory`: the most recent turns, as the agent does today | 3 of 61 | 9 of 61 | $0.020 |
+| `RetrievalMemory`: BM25 search over every turn | 50 of 61 | 47 of 61 | $0.020 |
+| `ConsolidatingMemory`: a summary rewritten after every session | 14 of 61 | 20 of 61 | $0.085 |
+
+Search answers about four questions in five and costs what the baseline
+costs. The summary beats the baseline and not the search, at four times the
+price: the model that writes it read every turn that holds an answer, and
+most of the answers did not survive the rewriting. Of the three hypotheses
+the project set out with, the first held, the second held in its first half
+and not clearly in its second, and the third did not hold as stated.
+
+A fourth strategy, `FactGraphMemory`, keeps timestamped facts in a graph
+database, Neo4j, where a newer value replaces an older one. It was built in
+the last week and measured as a pilot on 20 of the questions, of which it
+answered 10 of 10 and 6 of 10. With ten questions per type that shows what
+happened on those questions and does not rank it against the other three.
+
+**The method.** Each rule of the measurement was written down as a decision
+record before the strategy it applies to was measured, the answers of every
+run were read by hand before a figure was reported, and a script recomputes
+every figure in the report from the committed rows.
+
+**Where to read, in this order.**
+
+1. [docs/vg-project.md](docs/vg-project.md): the question and the hypotheses,
+   the plan and how each milestone closed, and
+   [where the project departs from its proposal](docs/vg-project.md#where-the-project-departs-from-its-proposal).
+2. [docs/method.md](docs/method.md): how a history is replayed, what the
+   budget covers, how answers are graded and how recall is counted.
+3. [docs/results.md](docs/results.md): the full table, what it says about
+   each hypothesis, the pilot, and the limitations.
+4. [docs/adr/](docs/adr/): the decision records. 0004 to 0011 and 0013 to
+   0019 are the rules of the measurement.
+5. The code: `life_agent/agent/memory.py` holds the interface and the four
+   strategies, `life_agent/agent/fact_store.py` the graph store,
+   `evals/longmemeval.py` the harness, and `evals/results/` one row per
+   question and run, next to the reviews of the hand readings.
+
+Step 5 of [docs/demo.md](docs/demo.md) shows the problem in the agent itself:
+it is told something it does not save, the chat is closed, and the fact is
+gone.
+
+**Check it.** Neither command calls a model:
+
+```bash
+pytest                                            # the four strategies and the agent, with a faked model
+pip install -e '.[eval]'                          # the tokenizer the harness counts with
+.venv/bin/python evals/results_table.py --check   # every figure in docs/results.md and in the table above
+```
+
+The check needs the network once, to download the tokenizer's vocabulary.
+Measuring a strategy again calls the model and costs money: the commands are
+at the top of `evals/longmemeval.py`.
+
 ## What it does
 
 - **Understands ordinary sentences.** One message can produce several items;
@@ -175,7 +254,7 @@ personal-life-agent/
 │   ├── llm/             # Dependency-free OpenAI-compatible client
 │   ├── config.py        # Settings, including the .env reader
 │   └── main.py          # Typer app entry point
-├── evals/               # Manual eval set, run by hand against a real model
+├── evals/               # The agent's eval set, the LongMemEval harness and its result rows
 ├── tests/               # Pytest suite (temporary databases, faked model)
 ├── docs/
 └── pyproject.toml

@@ -4,11 +4,12 @@ Reads the committed rows in evals/results/ and prints the figures the report
 quotes: accuracy, recall, precision, how often the evidence reached the
 context, what a recall held, and what a question cost, counted by the harness
 (ADR 0006) and with the framing the provider adds (ADR 0010). Every figure in
-docs/results.md must come from here. The fourth strategy's pilot (ADR 0019) is
-printed apart, in tables of its own.
+docs/results.md must come from here, and so must the ones README.md restates in
+its overview. The fourth strategy's pilot (ADR 0019) is printed apart, in
+tables of its own.
 
     .venv/bin/python evals/results_table.py            # the tables
-    .venv/bin/python evals/results_table.py --check    # docs/results.md against this script
+    .venv/bin/python evals/results_table.py --check    # docs/results.md and README.md against this script
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from evals.verify_adr_numbers import KU, PILOT_PER_TYPE, ROOT, SSU, TYPES, Claim
 
 RESULTS = ROOT / "evals" / "results"
 DOC = ROOT / "docs" / "results.md"
+README = ROOT / "README.md"
 # The run that stands for each strategy, in the order of the table.
 RUNS = {
     "recent-turns": "recent-turns-20261002-193902.jsonl",
@@ -591,15 +593,36 @@ def claims_pilot_text(f: dict) -> list[Claim]:
     ]
 
 
+def claims_readme(f: dict) -> list[Claim]:
+    """The overview in README.md: each strategy's correct answers per type and its cost per question over
+    both types, and the pilot's correct answers."""
+    c = f["cells"]
+
+    def row(name: str) -> Claim:
+        s, k = c[(name, SSU)], c[(name, KU)]
+        cost = (s["cost_per_q"] * s["n"] + k["cost_per_q"] * k["n"]) / (s["n"] + k["n"])
+        return Claim("readme", f"README: {NAMES[name]}", rf"`{NAMES[name]}`:[^|]*\| (\d+) of (\d+) \| (\d+) of (\d+) \| \$([\d.]+) \|",
+                     (s["correct"], s["n"], k["correct"], k["n"], f"{cost:.3f}"))
+
+    cs = [row(name) for name in RUNS]
+    if "pilot" in f and (RESULTS / PILOT_REVIEW).exists():
+        p = f["pilot"]
+        (fourth,) = PILOT
+        s, k = p["cells"][(fourth, SSU)], p["cells"][(fourth, KU)]
+        cs.append(Claim("readme", "README: pilot", r"a pilot on (\d+) of the questions, of which it answered (\d+) of (\d+) and (\d+) of (\d+)",
+                        (len(p["questions"]), s["correct"], s["n"], k["correct"], k["n"])))
+    return cs
+
+
 def main() -> int:
     f = compute()
     if "--check" not in sys.argv:
         print_tables(f)
         return 0
-    text = re.sub(r"\s+", " ", DOC.read_text(encoding="utf-8"))
-    cs = claims(f)
+    text, readme = (re.sub(r"\s+", " ", path.read_text(encoding="utf-8")) for path in (DOC, README))
+    cs = claims(f) + claims_readme(f)
     for c in cs:
-        judge(c, text)
+        judge(c, readme if c.adr == "readme" else text)
         print(f"{c.status:12s} {c.label:40s} text {fmt(c.groups) if c.groups else '—':52s} computed {fmt(c.computed)}")
     tally = Counter(c.status for c in cs)
     print("\n" + ", ".join(f"{k}: {v}" for k, v in sorted(tally.items())))
