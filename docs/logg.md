@@ -2,6 +2,49 @@
 
 Senaste överst. Vad jag gjorde, vad jag fick, vad som förvånade mig.
 
+## 2026-10-06
+
+Mätningen är klar. Kvar är redovisningen på fredag och det skrivna som
+Gabriel bad om: en översikt med syfte och resultat, och ett tydligt
+ställe att börja läsa på.
+
+Jag hade ett bildspel med körschema som byggdes i en annan chatt, utan
+tillgång till allt i repot. Lät agenten kontrollera det mot
+resultatraderna och dokumenten. Huvudsiffrorna stämde: tabellerna, de
+tre exempelfrågorna och kostnaden. Men tolv saker avvek, och de är inte
+rättade än.
+
+Den viktigaste: körschemat sa att Gabriel inte hade svarat om en skriven
+rapport. Det hade han. Ingången i README och avsnittet om avvikelser är
+alltså nödvändiga, inte bara bra att ha.
+
+**Anledning** till ordningen: jag började med de två, eftersom det är
+det Gabriel uttryckligen kräver.
+
+README har fått ett nytt första avsnitt om VG-projektet: frågan, vad som
+byggdes, resultaten, metoden och en läsordning genom repot.
+Kontrollskriptet räknar nu om README:s siffror också. docs/vg-project.md
+har fått ett avsnitt om var projektet avviker från pitchen, och
+körordningen är omskriven efter bildspelet: nio delar på 30 minuter.
+
+Två avvikelser skrev jag skälen till själv. Latens: ingen mätregel skrevs
+och ingen rad mäter tid, och mer än så säger jag inte. Datasetet: tanken
+var att mitt eget skulle växa fram medan jag byggde agenten under
+terminen, och det blev aldrig av. Därför blev LongMemEval det självklara
+valet.
+
+Granskningen hittade också ett fel i rapporten. Den säger att
+anteckningarna höll det nya värdet i alla 20 rätta svar på ändrade
+fakta. Enligt mina läsanteckningar gäller det 16 av 20. Inte rättat än.
+
+Bra att tänka på: agenten gjorde fyra val som jag inte har bestämt,
+bland annat var de nya avsnitten ligger. Och planen är exakt 30 minuter,
+utan tid för frågor.
+
+Kvar: committa, rätta bildspelet och meningen i rapporten, och två
+genomkörningar med klocka på torsdag. Torsdag slås grenen ihop med main,
+så att Gabriel ser rätt README.
+
 ## 2026-10-05
 
 Godkände körordningen för redovisningen, så första steget i M4 är klart.
