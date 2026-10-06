@@ -1,6 +1,6 @@
-# Method (draft)
+# Method
 
-Status: draft, written in M2 on 2026-10-03; the rules for
+Status: written in M2 on 2026-10-03; the rules for
 `ConsolidatingMemory` added in M3 the same night, before its run; the
 paragraphs on `FactGraphMemory` and its pilot added in M4 on 2026-10-05,
 after the pilot run, from records fixed before it (0018, 0019). Every rule

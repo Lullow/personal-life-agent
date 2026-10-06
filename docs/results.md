@@ -1,4 +1,4 @@
-# Results (draft)
+# Results
 
 Status: M3, three strategies, all answers read by hand; M4, a pilot of a
 fourth strategy on 20 questions, in a section of its own, read by hand.
