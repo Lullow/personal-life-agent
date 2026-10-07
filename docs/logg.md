@@ -2,6 +2,31 @@
 
 Senaste överst. Vad jag gjorde, vad jag fick, vad som förvånade mig.
 
+## 2026-10-07
+
+Sent igår kväll och i förmiddags: provade det som ska visas i Neo4j och
+tog skärmbilderna.
+
+Frågorna mot grafen fungerar. Kedjan för kaffet visar att en kopp
+ersattes av två, och frågan mot en tidpunkt ger en kopp 26 maj och två
+koppar 27 maj.
+
+Provet hittade två fel i bildspelet. Det viktigaste: rådet under "Om
+något går fel" hade alltid gett ett tomt svar, så det hade inte hjälpt
+på fredag. Båda är rättade.
+
+Tog sedan skärmbilder som reserv: fem av kedjan i Neo4j och två av
+agentdemon. Demon fick jag göra om tre gånger. En gång körde jag utan
+DB_PATH, och då visades min riktiga databas med privata händelser. Den
+bilden kastades.
+
+Bra att tänka på inför fredag: Neo4j startar inte av sig självt efter en
+omstart av datorn, det hände två gånger. Och demon måste köras mot
+demodatabasen, annars syns mina egna händelser på den delade skärmen.
+
+Kvar: torsdag två genomkörningar med klocka, grenen ihop med main och
+repot till Gabriel.
+
 ## 2026-10-06
 
 Mätningen är klar. Kvar är redovisningen på fredag och det skrivna som
