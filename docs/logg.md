@@ -27,6 +27,22 @@ demodatabasen, annars syns mina egna händelser på den delade skärmen.
 Kvar: torsdag två genomkörningar med klocka, grenen ihop med main och
 repot till Gabriel.
 
+---
+
+Eftermiddagen: gick igenom bildspelet mot repot en gång till.
+
+Siffrorna stämde, men småsaker hade glidit isär. Körschemat pekade på en
+fil som inte skulle finnas, eftersom jämförelseskriptets argument stod i
+en annan ordning än i docs/presentation.md och filnamnet följer
+ordningen. Och en rad på första bilden var en förenkling, inte det
+kommandot faktiskt skriver ut.
+
+Bra att tänka på: allt som ska köras eller öppnas live måste
+kontrolleras mot repot, inte bara resultaten.
+
+Reservplanen pekar nu ut bilderna med filnamn, så att jag inte behöver
+leta om något går fel.
+
 ## 2026-10-06
 
 Mätningen är klar. Kvar är redovisningen på fredag och det skrivna som
