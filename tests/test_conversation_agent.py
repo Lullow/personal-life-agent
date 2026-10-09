@@ -120,7 +120,7 @@ class TestSaveProposal:
 
         assert list_events(db_path) == []
         assert list_tasks(db_path) == []
-        assert list_activities(db_path) == []
+        assert list_activities(db_path=db_path) == []
 
     def test_save_is_always_flagged_for_confirmation(self, db_path):
         """The registry decides, not the model's own JSON."""
