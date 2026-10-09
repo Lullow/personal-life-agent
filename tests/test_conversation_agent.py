@@ -120,7 +120,7 @@ class TestSaveProposal:
 
         assert list_events(db_path) == []
         assert list_tasks(db_path) == []
-        assert list_activities(db_path) == []
+        assert list_activities(db_path=db_path) == []
 
     def test_save_is_always_flagged_for_confirmation(self, db_path):
         """The registry decides, not the model's own JSON."""
@@ -594,3 +594,141 @@ class TestEditFlows:
 
         assert turn.kind == "reply"
         assert turn.reply == BAD_DATE_TEXT
+
+
+# ---------------------------------------------------------------------------
+# The memory seam
+# ---------------------------------------------------------------------------
+
+
+class RecordingMemory:
+    """A memory that keeps everything and reports what it was handed."""
+
+    def __init__(self):
+        self.records = []
+        self.queries = []
+        self.cutoffs = []
+        self.sessions_ended = 0
+
+    def write(self, record):
+        self.records.append(record)
+
+    def retrieve(self, query, *, at, budget_tokens):
+        from life_agent.agent.memory import Retrieval
+
+        self.queries.append(query)
+        self.cutoffs.append(at)
+        visible = [r for r in self.records if r.at <= at]
+        return Retrieval(
+            messages=[r.as_message() for r in visible],
+            sources=tuple(r.id for r in visible),
+            tokens_used=len(visible),
+        )
+
+    def end_session(self):
+        self.sessions_ended += 1
+
+
+class TestMemorySeam:
+    def _fixed_clock(self):
+        from datetime import datetime
+
+        return lambda: datetime(2026, 9, 6, 12, 0, 0)
+
+    def test_the_agent_writes_through_the_injected_memory(self, db_path):
+        memory = RecordingMemory()
+        agent = _agent(
+            payloads=[{"tool": None, "arguments": {}, "reply": "Hej!"}],
+            db_path=db_path,
+            memory=memory,
+            clock=self._fixed_clock(),
+            session_id="s1",
+        )
+        agent.send("hej")
+
+        assert [(r.role, r.content, r.kind) for r in memory.records] == [
+            ("user", "hej", "message"),
+            ("assistant", "Hej!", "message"),
+        ]
+
+    def test_record_ids_are_deterministic_for_a_named_session(self, db_path):
+        def build():
+            memory = RecordingMemory()
+            agent = _agent(
+                payloads=[{"tool": None, "arguments": {}, "reply": "Hej!"}],
+                db_path=db_path,
+                memory=memory,
+                clock=self._fixed_clock(),
+                session_id="s1",
+            )
+            agent.send("hej")
+            return [r.id for r in memory.records]
+
+        assert build() == build() == ["s1:0", "s1:1"]
+
+    def test_an_outcome_is_written_as_an_outcome(self, db_path):
+        memory = RecordingMemory()
+        agent = _agent(
+            payloads=[{"tool": None, "arguments": {}, "reply": "ok"}],
+            db_path=db_path,
+            memory=memory,
+            clock=self._fixed_clock(),
+        )
+        agent.send("hej")
+        agent.record_outcome("Saved 4 item(s)")
+
+        outcome = memory.records[-1]
+        assert outcome.kind == "outcome"
+        assert outcome.content == "Saved 4 item(s)"
+
+    def test_recall_is_bounded_by_the_clock(self, db_path):
+        memory = RecordingMemory()
+        agent = _agent(
+            payloads=[{"tool": None, "arguments": {}, "reply": "Hej!"}],
+            db_path=db_path,
+            memory=memory,
+            clock=self._fixed_clock(),
+        )
+        agent.send("hej")
+
+        assert memory.cutoffs == [self._fixed_clock()()]
+
+    def test_recall_is_asked_for_the_users_words(self, db_path):
+        memory = RecordingMemory()
+        agent = _agent(
+            payloads=[{"tool": None, "arguments": {}, "reply": "Hej!"}],
+            db_path=db_path,
+            memory=memory,
+            clock=self._fixed_clock(),
+        )
+        agent.send("vad har jag imorgon?")
+
+        assert memory.queries == ["vad har jag imorgon?"]
+
+    def test_a_read_asks_the_memory_for_the_question_not_the_data(self, db_path):
+        memory = RecordingMemory()
+        agent = _agent(
+            payloads=[
+                {"tool": "list_day", "arguments": {"date": "2026-09-07"}, "reply": "Jag kollar"},
+                {"reply": "Du har ett möte."},
+            ],
+            db_path=db_path,
+            memory=memory,
+            clock=self._fixed_clock(),
+        )
+        agent.send("vad har jag imorgon?")
+
+        # Both the deciding call and the answering call recall against what the
+        # user actually asked — never against the retrieved rows.
+        assert memory.queries == ["vad har jag imorgon?", "vad har jag imorgon?"]
+
+    def test_ending_the_session_reaches_the_memory(self, db_path):
+        memory = RecordingMemory()
+        agent = _agent(
+            payloads=[{"tool": None, "arguments": {}, "reply": "ok"}],
+            db_path=db_path,
+            memory=memory,
+        )
+        agent.end_session()
+
+        assert memory.sessions_ended == 1

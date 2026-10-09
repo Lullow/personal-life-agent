@@ -15,6 +15,13 @@ offline extractor with an optional LLM bolted on, and the reasoning behind the
 change is in `docs/llm-first-pivot.md`. Read that before proposing anything that
 adds pattern matching back.
 
+This repo holds two projects: the graded memory-strategy comparison (the VG
+project) and the agent that consumes it. `docs/vg-project.md` separates them —
+read it before proposing larger work in the memory layer.
+
+`docs/logg.md` is the author's lab journal, in Swedish. Do not read,
+edit, or summarise it unless explicitly asked.
+
 ## Commands
 
 ```bash
@@ -31,6 +38,24 @@ pytest tests/test_conversation_agent.py::TestEditFlows -v
 
 # Eval — calls the real model, costs a few cents, read it with your eyes
 .venv/bin/python evals/agent_eval.py
+
+# LongMemEval harness — needs the eval extra and the pinned dataset in
+# data/longmemeval/ (ADR 0004). Rows go to data/longmemeval/runs/.
+pip install -e '.[eval]'
+.venv/bin/python evals/longmemeval.py --dry-run     # offline: replay, recall, token counts
+.venv/bin/python evals/longmemeval.py               # 10 per type; calls the model, costs money
+.venv/bin/python evals/longmemeval.py --strategy retrieval --dry-run   # RetrievalMemory, offline
+.venv/bin/python evals/longmemeval.py --strategy fact-graph --dry-run  # FactGraphMemory, offline, facts in the process
+# A run of fact-graph also needs the graph extra, the Neo4j container and
+# LIFE_AGENT_NEO4J_PASSWORD in .env (ADR 0018; the command is in
+# evals/spike_fact_graph.py).
+pip install -e '.[graph]'
+.venv/bin/python evals/verify_adr_numbers.py        # recompute every figure in ADRs 0004–0009
+.venv/bin/python evals/verify_adr_0011.py           # the same for ADR 0011
+.venv/bin/python evals/verify_adr_0015.py           # the same for ADRs 0015–0017
+.venv/bin/python evals/verify_adr_0018.py           # the same for ADRs 0018–0019
+.venv/bin/python evals/results_table.py --check    # every figure in docs/results.md, and README.md's overview
+.venv/bin/python evals/measurement_cost.py --check # what the measurement cost, in dollars and SEK (docs/vg-project.md)
 
 # Run
 python -m life_agent chat
@@ -63,6 +88,12 @@ Supporting modules: `models/` (persisted domain objects + shared enums),
 `agent/` (the conversation loop, see below), `llm/` (dependency-free
 OpenAI-compatible client using only `urllib`).
 
+Architecture decisions are recorded as ADRs in `docs/adr/` — one numbered file
+each, context / decision / consequences, never edited once written. Propose one
+whenever a decision shapes code that has yet to be written, or rests on a
+constraint the code cannot show. Format and the supersede rule:
+`docs/adr/README.md`.
+
 Every repository function accepts an optional `db_path`, which is how test
 isolation and the `DB_PATH` env var both work. The list functions also accept
 inclusive day bounds (`start`/`end`, or `due_from`/`due_to` for tasks).
@@ -71,6 +102,14 @@ inclusive day bounds (`start`/`end`, or `due_from`/`due_to` for tasks).
 
 > Natural language input must not write to the database without explicit
 > user confirmation.
+
+The memory layer is not an exception to this rule. It must persist natural
+language to its own store, which is not the database the rule protects. Memory
+has no write path to domain tables and is read-only into the prompt. One
+strategy persists: in a measured run `FactGraphMemory` keeps its facts in
+Neo4j, a store of its own (ADR 0018). The agent's default, `RecentTurnsMemory`,
+keeps its records in a list in the process, and persistence for the agent
+comes in step 4 (`docs/vg-project.md`). See "Memory layer" below.
 
 Enforced in code, not convention, at three independent layers:
 
@@ -89,9 +128,17 @@ and routed through a confirmation flow, never called from the loop.
 
 ```
 message → ConversationAgent.send()          life_agent/agent/conversation.py
-  history (10 turns) + system prompt → one call → {"tool", "arguments", "reply"}
+  memory.retrieve(...) + system prompt → one call → {"tool", "arguments", "reply"}
   → ToolRegistry lookup → AgentDecision → AgentPolicy → dispatch → AgentTurn
 ```
+
+The agent owns no message buffer; context comes from the memory Protocol — see
+"Memory layer" below. Both calls that build a message list, the tool call in
+`_ask_model` and the read answer in `_answer_from_data`, get it from
+`retrieve(...)`, and `send()` writes the user message and the reply back through
+`write()`. The default strategy is `RecentTurnsMemory` (`DEFAULT_HISTORY_TURNS`,
+10 turns). After a save the CLI calls `record_outcome()`, and `end_session()`
+when the chat closes.
 
 Four things matter and are easy to break:
 
@@ -147,3 +194,150 @@ file read by a small stdlib parser. A real environment variable always wins, and
 
 Model choice matters more than it looks: a weak model misclassifies and claims
 saves that did not happen. There is a measured comparison in the pivot doc.
+
+
+## Memory layer
+
+### The interface
+
+**The interface is the contract.** If a change makes it harder to swap the
+memory backend with one config line, the change is wrong, however clean it
+looks.
+
+`life_agent/agent/memory.py`
+
+```python
+@dataclass(frozen=True)
+class MemoryRecord:
+    id: str                   # deterministic: f"{session_id}:{turn_index}"
+    role: Literal["user", "assistant"]
+    content: str
+    kind: Literal["message", "outcome", "summary"]
+    at: datetime
+    session_id: str
+    derived_from: tuple[str, ...] = ()   # ids a summary ate; empty for raw turns
+
+@dataclass(frozen=True)
+class Retrieval:
+    messages: list[dict[str, str]]   # ready for chat_json, current turn excluded
+    sources: tuple[str, ...]         # record ids that reached the context
+    tokens_used: int
+
+class TokenCounter(Protocol):
+    def count(self, text: str) -> int: ...
+
+class ConversationMemory(Protocol):
+    def write(self, record: MemoryRecord) -> None: ...
+    def retrieve(self, query: str, *, at: datetime,
+                 budget_tokens: int) -> Retrieval: ...
+    def end_session(self) -> None: ...
+```
+
+Four implementations, in this order, all built (`docs/vg-project.md`). The
+first three are the comparison. The fourth stands outside it: ADR 0019 has it
+measured as a pilot on 20 questions, in a table of its own.
+
+1. `RecentTurnsMemory` — **built.** The last N turns, windowed at retrieve. The
+   agent's default, and the baseline.
+2. `RetrievalMemory` — **built.** BM25 over everything, filling the budget in
+   rank order and returning the messages in the order they were written, with
+   no way to overwrite stale facts. **This is intentional** — it is what the
+   baseline should fail at. Its rules, constants included, are fixed by ADR
+   0011 and are not tuned to a result.
+3. `ConsolidatingMemory` — **built.** A rolling summary rewritten by
+   `gpt-4o-mini` in `end_session()`, held to S = 1000 tokens (one re-ask,
+   then a cut that drops the oldest notes first), a session the model loops
+   on skipped and counted, shown first as an assistant turn, then the most
+   recent raw turns that fit. Raw turns are kept. Its design, how a summary
+   counts toward recall, and where its clock comes from are fixed by ADRs
+   0015–0017 (superseding 0012), 0013 and 0014; the prompt lives in
+   `memory.py`, not `prompts.py`, and is not tuned to a result. The harness builds it with a consolidator client;
+   the agent cannot be switched to it yet (it does not hand its client to
+   its memory).
+4. `FactGraphMemory` — **built.** One extraction call by `gpt-4o-mini` in
+   `end_session()` lists the session's facts as (subject, relation, value)
+   triples, each stamped with the strategy's clock. A fact replaces the facts
+   of earlier sessions that hold under its subject and relation, by a rule in
+   the code and not by the model; a fact said again is not stored; a replaced
+   fact is kept and marked, never deleted, so `retrieve(at=T)` can show what
+   held at an earlier time. Recall ranks the facts that hold at the cutoff
+   with ADR 0011's BM25, each on its line and the turn it names, shows those
+   that fit in F = 1000 tokens as one assistant turn, then the most recent
+   raw turns that fit. The facts live behind the `FactStore` Protocol in
+   `life_agent/agent/fact_store.py`: Neo4j in a measured run, a list in the
+   process for the tests and the dry run. Its design is fixed by ADR 0018
+   and is not tuned to a result; the rule replaces unrelated facts under
+   general names, and that is recorded, not fixed. The agent cannot be
+   switched to it yet.
+
+### Rules that hold across all implementations
+
+**Time cutoff.** `retrieve(at=T)` must never surface records with `at > T`. The
+evaluation replays histories step by step and asks what the memory should
+believe at a point in time. A leak here silently invalidates every number.
+
+A `kind="summary"` record carries the time consolidation *ran*, never the time
+of the records it derives from. Backdating a summary walks it straight past the
+cutoff and leaks the future into `retrieve(at=T)`.
+
+**Outcomes survive.** A record with `kind="outcome"` is a fact read out of the
+domain database, not a model utterance. It is preserved verbatim and is never
+dropped, summarised, or paraphrased during consolidation. The database gets the
+last word — that is load-bearing, not a detail.
+
+**The strategy owns consolidation.** The agent never calls consolidation
+directly. `write()` decides for itself whether it needs to consolidate;
+`end_session()` marks the session boundary. If the agent triggers it, we are
+comparing strategies under one policy instead of comparing the policies.
+
+**Budgets are in tokens.** Not characters. Cost is a reported metric, and
+characters-per-token differ between dense summaries and verbose raw turns —
+especially in Swedish, where compounds tokenize badly.
+
+**Ids are deterministic.** `f"{session_id}:{turn_index}"`, derived from
+position, never random. Replaying one history twice, or across two strategies,
+must produce the same ids — otherwise retrieval precision and recall are not
+comparable between the things being compared.
+
+### Boundaries
+
+Memory persistence must write to its own store. **Never** through
+`db/repositories.py`, never to a domain table. Memory is read-only into the
+prompt and has no write path into domain data. `FactGraphMemory`'s store is
+`fact_store.py`; the Neo4j driver is the optional extra `graph` and is
+imported only when a driver is asked for, so the app never loads it.
+
+Consolidation's LLM call runs outside the turn and must never be able to
+produce a tool call — the same discipline `READ_ANSWER_SYSTEM_PROMPT` already
+has. `ConsolidatingMemory` keeps that discipline: one JSON string back, and
+nothing dispatches on it. `FactGraphMemory`'s extraction keeps it too: one
+JSON list of facts back, and the code decides what they replace.
+
+Tests are offline (`tests/conftest.py` neutralises `.env`). Any embedding-based
+retrieval needs a deterministic fake embedder behind the same Protocol. The
+fact store's contract tests (`tests/test_fact_store.py`) also run against
+Neo4j, but only when `LIFE_AGENT_NEO4J_PASSWORD` is set in the real
+environment; otherwise that half is skipped.
+
+Cost must be measured **on the LLM client**, not inside the memory module. A
+strategy that retrieves more context makes the answer call more expensive, and
+a counter living inside the memory module cannot see that. The client that does
+it is a `RecordingLLMClient` wrapping `AgentLLMClient` and logging each call
+with a label ("consolidate", "answer", …): `life_agent/agent/recording.py`.
+
+### Out of scope
+
+Do not change `prompts.py` to suit the benchmark. This restriction is about
+benchmark-driven changes only — prompt fixes for agent behaviour still belong
+there, as described above.
+
+The agent is a Swedish household planner that is deliberately forbidden from
+answering from memory — it looks things up. LongMemEval measures an English
+assistant answering from memory. These are different jobs.
+
+The evaluation must therefore run **headless**: `evals/longmemeval.py` must
+drive the memory module through a thin harness, not through
+`ConversationAgent.send()`, and the agent must never appear in the measured
+path. It reads its questions from `evals/longmemeval_questions.json` and its
+replay rules from `evals/verify_adr_numbers.py`; ADRs 0004–0009, 0011 and
+0013–0019 are its specification.

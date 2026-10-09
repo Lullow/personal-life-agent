@@ -11,7 +11,7 @@ and what it replaced.
 your message
   │
   ├─ ConversationAgent.send()                    life_agent/agent/conversation.py
-  │     history (last 10 turns) + system prompt
+  │     memory.retrieve() (RecentTurnsMemory: the last 10 turns) + system prompt
   │     └─► one call ──► {"tool": …, "arguments": {…}, "reply": "…"}
   │
   ├─ ToolRegistry.get(tool)                      unknown name → rejected, answered as chat
